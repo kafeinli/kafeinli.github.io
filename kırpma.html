@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Toplu Filigran Kırpma Aracı</title>
+    <!-- ZIP dosyası oluşturmak için JSZip kütüphanesi -->
+    <script src="./zip.js"></script>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            padding: 20px; 
+            background-color: #f4f4f9;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        input[type="file"] {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #a0c4ff; cursor: not-allowed; }
+        
+        #status {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #333;
+            white-space: pre-line;
+        }
+        .preview-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .preview-item {
+            position: relative;
+        }
+        .preview-container img {
+            height: 120px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            object-fit: contain;
+            background: #fafafa;
+            display: block;
+        }
+        .preview-item .filename {
+            font-size: 11px;
+            color: #666;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: center;
+        }
+        .preview-item.error img {
+            border-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Toplu Fotoğraf Kırpma ve ZIP İndirme Aracı</h2>
+    <p>Birden fazla görsel seçin. Sistem her bir fotoğrafın alt kısmındaki %7'lik filigran bölümünü otomatik olarak kesecek ve size bir ZIP dosyası sunacaktır.</p>
+    
+    <!-- "multiple" özelliği ile birden fazla dosya seçimine izin veriyoruz -->
+    <input type="file" id="imageInput" accept="image/*" multiple>
+    
+    <button id="processBtn" disabled>Fotoğrafları Kırp ve ZIP İndir</button>
+    
+    <div id="status"></div>
+    
+    <!-- Kırpılmış fotoğrafların küçük önizlemeleri buraya eklenecek -->
+    <div class="preview-container" id="previewContainer"></div>
+</div>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const processBtn = document.getElementById('processBtn');
+    const statusDiv = document.getElementById('status');
+    const previewContainer = document.getElementById('previewContainer');
+
+    let selectedFiles = [];
+
+    // Dosya seçildiğinde butonu aktif et ve durumu göster
+    imageInput.addEventListener('change', (e) => {
+        selectedFiles = Array.from(e.target.files);
+        if (selectedFiles.length > 0) {
+            processBtn.disabled = false;
+            statusDiv.innerText = `${selectedFiles.length} fotoğraf seçildi. İşlemi başlatmak için butona tıklayın.`;
+            previewContainer.innerHTML = ''; // Eski önizlemeleri temizle
+        } else {
+            processBtn.disabled = true;
+            statusDiv.innerText = '';
+        }
+    });
+
+    // Aynı isimli dosyalar ZIP içinde birbirinin üzerine yazmasın diye
+    // benzersiz isim üretir: foto.jpg, foto(1).jpg, foto(2).jpg ...
+    function getUniqueName(usedNames, originalName) {
+        if (!usedNames.has(originalName)) {
+            usedNames.add(originalName);
+            return originalName;
+        }
+        const dotIndex = originalName.lastIndexOf('.');
+        const base = dotIndex !== -1 ? originalName.slice(0, dotIndex) : originalName;
+        const ext = dotIndex !== -1 ? originalName.slice(dotIndex) : '';
+        let counter = 1;
+        let candidate = `${base}(${counter})${ext}`;
+        while (usedNames.has(candidate)) {
+            counter++;
+            candidate = `${base}(${counter})${ext}`;
+        }
+        usedNames.add(candidate);
+        return candidate;
+    }
+
+    // Tek bir görseli işleyen Promise fonksiyonu.
+    // Artık reject etmek yerine, başarı/başarısızlık durumunu
+    // { ok, file, blob, error } şeklinde döndürüyor ki bir dosyanın
+    // hatası diğerlerini etkilemesin.
+    const processImage = (file) => {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                const img = new Image();
+
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const cropPercentage = 0.07;
+                        // Tam sayı olmayan canvas boyutları hataya yol açabildiği
+                        // için aşağı yuvarlıyoruz.
+                        const newHeight = Math.floor(img.height * (1 - cropPercentage));
+
+                        canvas.width = img.width;
+                        canvas.height = newHeight;
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, img.width, newHeight, 0, 0, canvas.width, canvas.height);
+
+                        const previewUrl = canvas.toDataURL('image/jpeg', 0.7);
+
+                        const outputType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg';
+
+                        canvas.toBlob((blob) => {
+                            if (!blob) {
+                                resolve({ ok: false, file, error: 'Blob oluşturulamadı' });
+                                return;
+                            }
+                            resolve({ ok: true, file, blob, previewUrl });
+                        }, outputType, 0.95);
+                    } catch (err) {
+                        resolve({ ok: false, file, error: err.message });
+                    }
+                };
+
+                img.onerror = () => resolve({ ok: false, file, error: 'Görsel yüklenemedi (bozuk dosya olabilir)' });
+                img.src = event.target.result;
+            };
+
+            reader.onerror = () => resolve({ ok: false, file, error: 'Dosya okunamadı' });
+            reader.readAsDataURL(file);
+        });
+    };
+
+    // İşlem butonuna tıklandığında çalışacak fonksiyon
+    processBtn.addEventListener('click', async () => {
+        if (selectedFiles.length === 0) return;
+
+        processBtn.disabled = true;
+        previewContainer.innerHTML = '';
+        statusDiv.innerText = 'Fotoğraflar işleniyor, lütfen bekleyin...';
+
+        const zip = new JSZip();
+        const usedNames = new Set();
+
+        // Çok sayıda / büyük görselde tarayıcı belleğini zorlamamak için
+        // tamamen paralel yerine küçük gruplar halinde (sırayla) işliyoruz.
+        const CONCURRENCY = 4;
+        const results = [];
+        for (let i = 0; i < selectedFiles.length; i += CONCURRENCY) {
+            const batch = selectedFiles.slice(i, i + CONCURRENCY);
+            const batchResults = await Promise.all(batch.map(processImage));
+            results.push(...batchResults);
+            statusDiv.innerText = `İşleniyor... (${Math.min(i + CONCURRENCY, selectedFiles.length)}/${selectedFiles.length})`;
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+        const failedNames = [];
+
+        for (const result of results) {
+            const item = document.createElement('div');
+            item.className = 'preview-item';
+
+            if (result.ok) {
+                const uniqueName = getUniqueName(usedNames, result.file.name);
+                zip.file(uniqueName, result.blob);
+
+                const img = document.createElement('img');
+                img.src = result.previewUrl;
+                item.appendChild(img);
+                successCount++;
+            } else {
+                item.classList.add('error');
+                failCount++;
+                failedNames.push(result.file.name);
+            }
+
+            const label = document.createElement('div');
+            label.className = 'filename';
+            label.innerText = result.file.name + (result.ok ? '' : ' ❌');
+            item.appendChild(label);
+
+            previewContainer.appendChild(item);
+        }
+
+        if (successCount === 0) {
+            statusDiv.innerText = '❌ Hiçbir fotoğraf işlenemedi. Dosyaların bozuk olmadığından emin olun.';
+            processBtn.disabled = false;
+            return;
+        }
+
+        try {
+            statusDiv.innerText = 'ZIP dosyası hazırlanıyor, indirme başlayacak...';
+
+            const zipContent = await zip.generateAsync({ type: 'blob' });
+
+            const downloadLink = document.createElement('a');
+            const url = URL.createObjectURL(zipContent);
+            downloadLink.href = url;
+            downloadLink.download = 'kirpilmis_fotograflar.zip';
+            downloadLink.click();
+            URL.revokeObjectURL(url);
+
+            let finalMessage = `✅ İşlem tamamlandı! ${successCount} fotoğraf başarıyla kırpıldı ve ZIP olarak indirildi.`;
+            if (failCount > 0) {
+                finalMessage += `\n⚠️ ${failCount} dosya işlenemedi: ${failedNames.join(', ')}`;
+            }
+            statusDiv.innerText = finalMessage;
+        } catch (error) {
+            console.error(error);
+            statusDiv.innerText = '❌ ZIP oluşturulurken bir hata oluştu: ' + error.message;
+        } finally {
+            processBtn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>
