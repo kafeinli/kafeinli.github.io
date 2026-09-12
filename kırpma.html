@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Toplu Filigran Kırpma Aracı</title>
+    <!-- ZIP dosyası oluşturmak için JSZip kütüphanesi -->
+    <script src="./zip.js"></script>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            padding: 20px; 
+            background-color: #f4f4f9;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        input[type="file"] {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .options-panel {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .option-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .option-group:last-child {
+            margin-bottom: 0;
+        }
+        .date-picker-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            padding-left: 25px;
+        }
+        .date-picker-container input[type="date"] {
+            padding: 6px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #a0c4ff; cursor: not-allowed; }
+        
+        #status {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #333;
+            white-space: pre-line;
+        }
+        .preview-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .preview-item {
+            position: relative;
+        }
+        .preview-container img {
+            height: 120px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            object-fit: contain;
+            background: #fafafa;
+            display: block;
+        }
+        .preview-item .filename {
+            font-size: 11px;
+            color: #666;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: center;
+        }
+        .preview-item.error img {
+            border-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Toplu Fotoğraf Kırpma ve ZIP İndirme Aracı</h2>
+    <p>Birden fazla görsel seçin. Sistem her bir fotoğrafın alt kısmındaki %7'lik filigran bölümünü otomatik olarak kesecektir.</p>
+    
+    <input type="file" id="imageInput" accept="image/*" multiple>
+
+    <!-- Ayarlar Paneli -->
+    <div class="options-panel">
+        <div class="option-group">
+            <input type="checkbox" id="addDateCheckbox">
+            <label for="addDateCheckbox"><strong>Kırpılan Fotoğraflara Yeni Tarih Damgası Ekle</strong></label>
+        </div>
+        <div class="date-picker-container" id="datePickerGroup" style="display: none;">
+            <label for="dateInput">Tarih Seçin:</label>
+            <input type="date" id="dateInput">
+        </div>
+    </div>
+    
+    <button id="processBtn" disabled>Fotoğrafları Kırp ve ZIP İndir</button>
+    
+    <div id="status"></div>
+    
+    <div class="preview-container" id="previewContainer"></div>
+</div>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const processBtn = document.getElementById('processBtn');
+    const statusDiv = document.getElementById('status');
+    const previewContainer = document.getElementById('previewContainer');
+    const addDateCheckbox = document.getElementById('addDateCheckbox');
+    const datePickerGroup = document.getElementById('datePickerGroup');
+    const dateInput = document.getElementById('dateInput');
+
+    let selectedFiles = [];
+
+    // Varsayılan olarak bugünün tarihini seç (YYYY-MM-DD)
+    const today = new Date();
+    dateInput.value = today.toISOString().split('T')[0];
+
+    // Tarih seçeneği kutusu işaretlendiğinde tarih seçiciyi göster/gizle
+    addDateCheckbox.addEventListener('change', () => {
+        datePickerGroup.style.display = addDateCheckbox.checked ? 'flex' : 'none';
+    });
+
+    imageInput.addEventListener('change', (e) => {
+        selectedFiles = Array.from(e.target.files);
+        if (selectedFiles.length > 0) {
+            processBtn.disabled = false;
+            statusDiv.innerText = `${selectedFiles.length} fotoğraf seçildi. İşlemi başlatmak için butona tıklayın.`;
+            previewContainer.innerHTML = '';
+        } else {
+            processBtn.disabled = true;
+            statusDiv.innerText = '';
+        }
+    });
+
+    function getUniqueName(usedNames, originalName) {
+        if (!usedNames.has(originalName)) {
+            usedNames.add(originalName);
+            return originalName;
+        }
+        const dotIndex = originalName.lastIndexOf('.');
+        const base = dotIndex !== -1 ? originalName.slice(0, dotIndex) : originalName;
+        const ext = dotIndex !== -1 ? originalName.slice(dotIndex) : '';
+        let counter = 1;
+        let candidate = `${base}(${counter})${ext}`;
+        while (usedNames.has(candidate)) {
+            counter++;
+            candidate = `${base}(${counter})${ext}`;
+        }
+        usedNames.add(candidate);
+        return candidate;
+    }
+
+    // Tarihi saat olmadan YYYY/M/D formatına çevirir
+    function getFormattedDateString(dateVal) {
+        if (!dateVal) return '';
+        const d = new Date(dateVal);
+        const year = d.getFullYear();
+        const month = d.getMonth() + 1;
+        const day = d.getDate();
+        
+        return `${year}/${month}/${day}`;
+    }
+
+    const processImage = (file, shouldAddDate, dateStr) => {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                const img = new Image();
+
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const cropPercentage = 0.07;
+                        const newHeight = Math.floor(img.height * (1 - cropPercentage));
+
+                        canvas.width = img.width;
+                        canvas.height = newHeight;
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, img.width, newHeight, 0, 0, canvas.width, canvas.height);
+
+                        // Kullanıcı tarih eklemek istediyse damgayı çiz
+                        if (shouldAddDate && dateStr) {
+                            // Punto boyutu hafifçe küçültüldü (0.032'den 0.025'e düşürüldü)
+                            const fontSize = Math.max(12, Math.floor(canvas.height * 0.025));
+                            const marginX = canvas.width * 0.04;
+                            const marginY = canvas.height * 0.03;
+
+                            ctx.font = `${fontSize}px Arial, Helvetica, sans-serif`;
+                            ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+                            ctx.textAlign = 'right';
+                            ctx.textBaseline = 'bottom';
+
+                            // Beyaz zeminlerde okunabilirlik için gölge
+                            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+                            ctx.shadowBlur = Math.max(2, Math.floor(fontSize * 0.15));
+                            ctx.shadowOffsetX = 1;
+                            ctx.shadowOffsetY = 1;
+
+                            ctx.fillText(dateStr, canvas.width - marginX, canvas.height - marginY);
+                        }
+
+                        const previewUrl = canvas.toDataURL('image/jpeg', 0.7);
+                        const outputType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg';
+
+                        canvas.toBlob((blob) => {
+                            if (!blob) {
+                                resolve({ ok: false, file, error: 'Blob oluşturulamadı' });
+                                return;
+                            }
+                            resolve({ ok: true, file, blob, previewUrl });
+                        }, outputType, 0.95);
+                    } catch (err) {
+                        resolve({ ok: false, file, error: err.message });
+                    }
+                };
+
+                img.onerror = () => resolve({ ok: false, file, error: 'Görsel yüklenemedi' });
+                img.src = event.target.result;
+            };
+
+            reader.onerror = () => resolve({ ok: false, file, error: 'Dosya okunamadı' });
+            reader.readAsDataURL(file);
+        });
+    };
+
+    processBtn.addEventListener('click', async () => {
+        if (selectedFiles.length === 0) return;
+
+        processBtn.disabled = true;
+        previewContainer.innerHTML = '';
+        statusDiv.innerText = 'Fotoğraflar işleniyor, lütfen bekleyin...';
+
+        const zip = new JSZip();
+        const usedNames = new Set();
+        
+        const shouldAddDate = addDateCheckbox.checked;
+        const dateStr = shouldAddDate ? getFormattedDateString(dateInput.value) : '';
+
+        const CONCURRENCY = 4;
+        const results = [];
+        for (let i = 0; i < selectedFiles.length; i += CONCURRENCY) {
+            const batch = selectedFiles.slice(i, i + CONCURRENCY);
+            const batchResults = await Promise.all(batch.map(f => processImage(f, shouldAddDate, dateStr)));
+            results.push(...batchResults);
+            statusDiv.innerText = `İşleniyor... (${Math.min(i + CONCURRENCY, selectedFiles.length)}/${selectedFiles.length})`;
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+        const failedNames = [];
+
+        for (const result of results) {
+            const item = document.createElement('div');
+            item.className = 'preview-item';
+
+            if (result.ok) {
+                const uniqueName = getUniqueName(usedNames, result.file.name);
+                zip.file(uniqueName, result.blob);
+
+                const img = document.createElement('img');
+                img.src = result.previewUrl;
+                item.appendChild(img);
+                successCount++;
+            } else {
+                item.classList.add('error');
+                failCount++;
+                failedNames.push(result.file.name);
+            }
+
+            const label = document.createElement('div');
+            label.className = 'filename';
+            label.innerText = result.file.name + (result.ok ? '' : ' ❌');
+            item.appendChild(label);
+
+            previewContainer.appendChild(item);
+        }
+
+        if (successCount === 0) {
+            statusDiv.innerText = '❌ Hiçbir fotoğraf işlenemedi.';
+            processBtn.disabled = false;
+            return;
+        }
+
+        try {
+            statusDiv.innerText = 'ZIP dosyası hazırlanıyor, indirme başlayacak...';
+
+            const zipContent = await zip.generateAsync({ 
+                type: 'blob',
+                mimeType: 'application/zip',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 6 }
+            });
+
+            const blobUrl = URL.createObjectURL(zipContent);
+            const downloadLink = document.createElement('a');
+            downloadLink.href = blobUrl;
+            downloadLink.download = 'kirpilmis_fotograflar.zip';
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+
+            setTimeout(() => {
+                document.body.removeChild(downloadLink);
+                URL.revokeObjectURL(blobUrl);
+            }, 100);
+
+            let finalMessage = `✅ İşlem tamamlandı! ${successCount} fotoğraf başarıyla kırpıldı ve ZIP olarak indirildi.`;
+            if (failCount > 0) {
+                finalMessage += `\n⚠️ ${failCount} dosya işlenemedi: ${failedNames.join(', ')}`;
+            }
+            statusDiv.innerText = finalMessage;
+        } catch (error) {
+            console.error(error);
+            statusDiv.innerText = '❌ ZIP oluşturulurken bir hata oluştu: ' + error.message;
+        } finally {
+            processBtn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>
