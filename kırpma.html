@@ -55,6 +55,64 @@
             border: 1px solid #ccc;
             border-radius: 4px;
         }
+        
+        /* Canlı Önizleme Alanı Stilleri */
+        .live-preview-box {
+            background: #fff;
+            border: 1px solid #dcdfe6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .live-preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .live-preview-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #2c3e50;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            font-size: 13px;
+            padding: 6px 12px;
+        }
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
+        .preview-comparison {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .preview-card {
+            flex: 1;
+            min-width: 260px;
+            background: #f8f9fa;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+        }
+        .preview-card h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #495057;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .preview-card img {
+            max-width: 100%;
+            max-height: 280px;
+            object-fit: contain;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #eef;
+        }
+
         button {
             background-color: #007bff;
             color: white;
@@ -129,8 +187,26 @@
             <input type="date" id="dateInput">
         </div>
     </div>
+
+    <!-- Canlı Önizleme Alanı -->
+    <div class="live-preview-box" id="livePreviewBox" style="display: none;">
+        <div class="live-preview-header">
+            <h3>🔍 Canlı Önizleme (Örnek Görsel)</h3>
+            <button type="button" class="btn-secondary" id="randomPreviewBtn">Farklı Örnek Göster 🎲</button>
+        </div>
+        <div class="preview-comparison">
+            <div class="preview-card">
+                <h4>Öncesi (Orijinal)</h4>
+                <img id="beforeImg" src="" alt="Orijinal Fotoğraf">
+            </div>
+            <div class="preview-card">
+                <h4>Sonrası (Kırpılmış / İşlenmiş)</h4>
+                <img id="afterImg" src="" alt="İşlenmiş Fotoğraf">
+            </div>
+        </div>
+    </div>
     
-    <button id="processBtn" disabled>Fotoğrafları Kırp ve ZIP İndir</button>
+    <button id="processBtn" disabled>Tüm Fotoğrafları Kırp ve ZIP İndir</button>
     
     <div id="status"></div>
     
@@ -147,15 +223,26 @@
     const datePickerGroup = document.getElementById('datePickerGroup');
     const dateInput = document.getElementById('dateInput');
 
-    let selectedFiles = [];
+    const livePreviewBox = document.getElementById('livePreviewBox');
+    const beforeImg = document.getElementById('beforeImg');
+    const afterImg = document.getElementById('afterImg');
+    const randomPreviewBtn = document.getElementById('randomPreviewBtn');
 
-    // Varsayılan olarak bugünün tarihini seç
+    let selectedFiles = [];
+    let currentPreviewIndex = 0;
+
+    // Varsayılan tarih seçimi
     const today = new Date();
     dateInput.value = today.toISOString().split('T')[0];
 
+    // Tarih kutusu açılıp kapandığında ve ayarlar değiştiğinde önizlemeyi yenile
     addDateCheckbox.addEventListener('change', () => {
         datePickerGroup.style.display = addDateCheckbox.checked ? 'flex' : 'none';
+        renderLivePreview();
     });
+
+    stretchCheckbox.addEventListener('change', renderLivePreview);
+    dateInput.addEventListener('change', renderLivePreview);
 
     imageInput.addEventListener('change', (e) => {
         selectedFiles = Array.from(e.target.files);
@@ -163,11 +250,49 @@
             processBtn.disabled = false;
             statusDiv.innerText = `${selectedFiles.length} fotoğraf seçildi. İşlemi başlatmak için butona tıklayın.`;
             previewContainer.innerHTML = '';
+            
+            // Önizleme alanını aktif et ve ilk fotoğrafı göster
+            currentPreviewIndex = 0;
+            livePreviewBox.style.display = 'block';
+            renderLivePreview();
         } else {
             processBtn.disabled = true;
             statusDiv.innerText = '';
+            livePreviewBox.style.display = 'none';
         }
     });
+
+    // Rastgele örnek gösterme butonu
+    randomPreviewBtn.addEventListener('click', () => {
+        if (selectedFiles.length <= 1) return;
+        let newIndex;
+        do {
+            newIndex = Math.floor(Math.random() * selectedFiles.length);
+        } while (newIndex === currentPreviewIndex && selectedFiles.length > 1);
+        
+        currentPreviewIndex = newIndex;
+        renderLivePreview();
+    });
+
+    // Seçilen ayarlara göre tek bir örnek için Canlı Önizleme oluşturur
+    async function renderLivePreview() {
+        if (selectedFiles.length === 0) return;
+
+        const sampleFile = selectedFiles[currentPreviewIndex];
+        const shouldStretch = stretchCheckbox.checked;
+        const shouldAddDate = addDateCheckbox.checked;
+        const dateStr = shouldAddDate ? getFormattedDateString(dateInput.value) : '';
+
+        // Orijinal resmi sol tarafa set et
+        const originalUrl = URL.createObjectURL(sampleFile);
+        beforeImg.src = originalUrl;
+
+        // İşlenmiş resmi üret ve sağ tarafa set et
+        const result = await processImage(sampleFile, shouldStretch, shouldAddDate, dateStr);
+        if (result.ok) {
+            afterImg.src = result.previewUrl;
+        }
+    }
 
     function getUniqueName(usedNames, originalName) {
         if (!usedNames.has(originalName)) {
@@ -210,20 +335,17 @@
                         const cropPercentage = 0.07;
                         const croppedSourceHeight = Math.floor(img.height * (1 - cropPercentage));
 
-                        // Orijinal boyutu koruma (esnetme) durumuna göre canvas boyutu belirlenir
                         canvas.width = img.width;
                         canvas.height = shouldStretch ? img.height : croppedSourceHeight;
 
                         const ctx = canvas.getContext('2d');
 
-                        // Görselin %93'lük üst kısmını alıp canvas boyutlarına çiziyoruz (esneterek veya keserek)
                         ctx.drawImage(
                             img, 
-                            0, 0, img.width, croppedSourceHeight,  // Kaynak koordinat ve boyutu
-                            0, 0, canvas.width, canvas.height       // Hedef koordinat ve boyutu
+                            0, 0, img.width, croppedSourceHeight,
+                            0, 0, canvas.width, canvas.height
                         );
 
-                        // Tarih ekleme
                         if (shouldAddDate && dateStr) {
                             const fontSize = Math.max(12, Math.floor(canvas.height * 0.025));
                             const marginX = canvas.width * 0.04;
@@ -242,7 +364,7 @@
                             ctx.fillText(dateStr, canvas.width - marginX, canvas.height - marginY);
                         }
 
-                        const previewUrl = canvas.toDataURL('image/jpeg', 0.7);
+                        const previewUrl = canvas.toDataURL('image/jpeg', 0.8);
                         const outputType = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg';
 
                         canvas.toBlob((blob) => {
