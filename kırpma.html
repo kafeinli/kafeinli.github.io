@@ -43,17 +43,20 @@
         .option-group:last-child {
             margin-bottom: 0;
         }
-        .date-picker-container {
+        .picker-container {
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-top: 10px;
+            margin-top: 6px;
+            margin-bottom: 12px;
             padding-left: 25px;
         }
-        .date-picker-container input[type="date"] {
+        .picker-container input[type="date"],
+        .picker-container select {
             padding: 6px 10px;
             border: 1px solid #ccc;
             border-radius: 4px;
+            font-size: 14px;
         }
         
         /* Canlı Önizleme Alanı Stilleri */
@@ -180,11 +183,24 @@
 
         <div class="option-group">
             <input type="checkbox" id="addDateCheckbox">
-            <label for="addDateCheckbox"><strong>Yeni Tarih Damgası Ekle</strong></label>
+            <label for="addDateCheckbox"><strong>Yeni Tarih Damgası Ekle (Sağ Alt)</strong></label>
         </div>
-        <div class="date-picker-container" id="datePickerGroup" style="display: none;">
+        <div class="picker-container" id="datePickerGroup" style="display: none;">
             <label for="dateInput">Tarih Seçin:</label>
             <input type="date" id="dateInput">
+        </div>
+
+        <div class="option-group">
+            <input type="checkbox" id="addDeviceCheckbox">
+            <label for="addDeviceCheckbox"><strong>Cihaz Bilgisi Ekle (Sol Alt)</strong></label>
+        </div>
+        <div class="picker-container" id="devicePickerGroup" style="display: none;">
+            <label for="deviceSelect">Cihaz Seçin:</label>
+            <select id="deviceSelect">
+                <option value="POCO X3 Pro">POCO X3 Pro</option>
+                <option value="Redmi Note 7">Redmi Note 7</option>
+                <option value="Galaxy A55">Galaxy A55</option>
+            </select>
         </div>
     </div>
 
@@ -219,9 +235,14 @@
     const statusDiv = document.getElementById('status');
     const previewContainer = document.getElementById('previewContainer');
     const stretchCheckbox = document.getElementById('stretchCheckbox');
+    
     const addDateCheckbox = document.getElementById('addDateCheckbox');
     const datePickerGroup = document.getElementById('datePickerGroup');
     const dateInput = document.getElementById('dateInput');
+
+    const addDeviceCheckbox = document.getElementById('addDeviceCheckbox');
+    const devicePickerGroup = document.getElementById('devicePickerGroup');
+    const deviceSelect = document.getElementById('deviceSelect');
 
     const livePreviewBox = document.getElementById('livePreviewBox');
     const beforeImg = document.getElementById('beforeImg');
@@ -235,14 +256,21 @@
     const today = new Date();
     dateInput.value = today.toISOString().split('T')[0];
 
-    // Tarih kutusu açılıp kapandığında ve ayarlar değiştiğinde önizlemeyi yenile
+    // Tarih seçeneği dinleyicileri
     addDateCheckbox.addEventListener('change', () => {
         datePickerGroup.style.display = addDateCheckbox.checked ? 'flex' : 'none';
         renderLivePreview();
     });
+    dateInput.addEventListener('change', renderLivePreview);
+
+    // Cihaz seçeneği dinleyicileri
+    addDeviceCheckbox.addEventListener('change', () => {
+        devicePickerGroup.style.display = addDeviceCheckbox.checked ? 'flex' : 'none';
+        renderLivePreview();
+    });
+    deviceSelect.addEventListener('change', renderLivePreview);
 
     stretchCheckbox.addEventListener('change', renderLivePreview);
-    dateInput.addEventListener('change', renderLivePreview);
 
     imageInput.addEventListener('change', (e) => {
         selectedFiles = Array.from(e.target.files);
@@ -251,7 +279,6 @@
             statusDiv.innerText = `${selectedFiles.length} fotoğraf seçildi. İşlemi başlatmak için butona tıklayın.`;
             previewContainer.innerHTML = '';
             
-            // Önizleme alanını aktif et ve ilk fotoğrafı göster
             currentPreviewIndex = 0;
             livePreviewBox.style.display = 'block';
             renderLivePreview();
@@ -262,7 +289,6 @@
         }
     });
 
-    // Rastgele örnek gösterme butonu
     randomPreviewBtn.addEventListener('click', () => {
         if (selectedFiles.length <= 1) return;
         let newIndex;
@@ -274,7 +300,6 @@
         renderLivePreview();
     });
 
-    // Seçilen ayarlara göre tek bir örnek için Canlı Önizleme oluşturur
     async function renderLivePreview() {
         if (selectedFiles.length === 0) return;
 
@@ -282,13 +307,13 @@
         const shouldStretch = stretchCheckbox.checked;
         const shouldAddDate = addDateCheckbox.checked;
         const dateStr = shouldAddDate ? getFormattedDateString(dateInput.value) : '';
+        const shouldAddDevice = addDeviceCheckbox.checked;
+        const deviceStr = shouldAddDevice ? deviceSelect.value : '';
 
-        // Orijinal resmi sol tarafa set et
         const originalUrl = URL.createObjectURL(sampleFile);
         beforeImg.src = originalUrl;
 
-        // İşlenmiş resmi üret ve sağ tarafa set et
-        const result = await processImage(sampleFile, shouldStretch, shouldAddDate, dateStr);
+        const result = await processImage(sampleFile, shouldStretch, shouldAddDate, dateStr, shouldAddDevice, deviceStr);
         if (result.ok) {
             afterImg.src = result.previewUrl;
         }
@@ -319,10 +344,10 @@
         const month = d.getMonth() + 1;
         const day = d.getDate();
         
-        return `${year}/${month}/${day}`;
+        return `${year} / ${month} / ${day}`;
     }
 
-    const processImage = (file, shouldStretch, shouldAddDate, dateStr) => {
+    const processImage = (file, shouldStretch, shouldAddDate, dateStr, shouldAddDevice, deviceStr) => {
         return new Promise((resolve) => {
             const reader = new FileReader();
 
@@ -346,22 +371,30 @@
                             0, 0, canvas.width, canvas.height
                         );
 
-                        if (shouldAddDate && dateStr) {
-                            const fontSize = Math.max(12, Math.floor(canvas.height * 0.025));
-                            const marginX = canvas.width * 0.04;
-                            const marginY = canvas.height * 0.03;
+                        // Filigran parametreleri (her iki metin için ortak stil)
+                        const fontSize = Math.max(12, Math.floor(canvas.height * 0.030));
+                        const marginX = canvas.width * 0.04;
+                        const marginY = canvas.height * 0.03;
 
-                            ctx.font = `${fontSize}px Arial, Helvetica, sans-serif`;
-                            ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+                        ctx.font = `${fontSize}px Arial, Helvetica, sans-serif`;
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+                        ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+                        ctx.shadowBlur = Math.max(2, Math.floor(fontSize * 0.15));
+                        ctx.shadowOffsetX = 1;
+                        ctx.shadowOffsetY = 1;
+
+                        // Tarih Damgası (Sağ Alt)
+                        if (shouldAddDate && dateStr) {
                             ctx.textAlign = 'right';
                             ctx.textBaseline = 'bottom';
-
-                            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-                            ctx.shadowBlur = Math.max(2, Math.floor(fontSize * 0.15));
-                            ctx.shadowOffsetX = 1;
-                            ctx.shadowOffsetY = 1;
-
                             ctx.fillText(dateStr, canvas.width - marginX, canvas.height - marginY);
+                        }
+
+                        // Cihaz Bilgisi (Sol Alt)
+                        if (shouldAddDevice && deviceStr) {
+                            ctx.textAlign = 'left';
+                            ctx.textBaseline = 'bottom';
+                            ctx.fillText(deviceStr, marginX, canvas.height - marginY);
                         }
 
                         const previewUrl = canvas.toDataURL('image/jpeg', 0.8);
@@ -401,12 +434,16 @@
         const shouldStretch = stretchCheckbox.checked;
         const shouldAddDate = addDateCheckbox.checked;
         const dateStr = shouldAddDate ? getFormattedDateString(dateInput.value) : '';
+        const shouldAddDevice = addDeviceCheckbox.checked;
+        const deviceStr = shouldAddDevice ? deviceSelect.value : '';
 
         const CONCURRENCY = 4;
         const results = [];
         for (let i = 0; i < selectedFiles.length; i += CONCURRENCY) {
             const batch = selectedFiles.slice(i, i + CONCURRENCY);
-            const batchResults = await Promise.all(batch.map(f => processImage(f, shouldStretch, shouldAddDate, dateStr)));
+            const batchResults = await Promise.all(
+                batch.map(f => processImage(f, shouldStretch, shouldAddDate, dateStr, shouldAddDevice, deviceStr))
+            );
             results.push(...batchResults);
             statusDiv.innerText = `İşleniyor... (${Math.min(i + CONCURRENCY, selectedFiles.length)}/${selectedFiles.length})`;
         }
