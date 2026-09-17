@@ -7,16 +7,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         :root { --word-color: #2b579a; --manual-color: #e67e22; --success: #27ae60; --bg: #f4f7f6; --warn: #e74c3c; }
-        body { overflow-x: hidden; font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); padding: 20px; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); padding: 20px; margin: 0; }
 
 
 
-        .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; min-width: 0; }
-        .panel { background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); display: flex; flex-direction: column; min-height: 300px; min-width: 0; overflow: hidden; }
+        .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); display: flex; flex-direction: column; height: 80vh; }
         .panel-header { padding: 12px 16px; color: white; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; gap: 8px; flex-wrap: wrap; }
         .word-header { background: var(--word-color); }
         .manual-header { background: var(--manual-color); }
-        .panel-body { padding: 15px; overflow-x: auto; overflow-y: visible; flex-grow: 1; min-width: 0; }
+        .panel-body { padding: 15px; overflow: auto; flex-grow: 1; }
         textarea { width: 100%; height: 80px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; font-size: 11px; margin-bottom: 10px; resize: none; box-sizing: border-box; }
         .data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
         .data-table th { background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; text-align: left; position: sticky; top: 0; z-index: 10; }
@@ -29,7 +29,12 @@
         .highlight { font-weight: bold; color: var(--word-color); }
 
         /* ── Word header controls ── */
-        .word-controls { display: flex; align-items: center; gap: 6px; }
+        .word-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .taslak-select { padding: 5px 8px; border-radius: 5px; border: 1.5px solid rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.15); color: white; font-size: 12px; outline: none;
+            cursor: pointer; max-width: 180px; }
+        .taslak-select option { background: #2b579a; color: white; }
+        .taslak-select:disabled { opacity: 0.5; cursor: default; }
 
         /* ── Manual header controls ── */
         .manual-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -102,6 +107,9 @@
             <div class="word-controls">
                 <input type="file" id="wordInp" accept=".docx" hidden>
                 <button class="btn btn-white" id="wordLoadBtn" onclick="document.getElementById('wordInp').click()">Rapor Yükle</button>
+                <select id="taslaklarSelect" class="taslak-select" onchange="taslaklardenSec(this.value)" title="GitHub'daki taslak raporlar">
+                    <option value="">📂 Taslak Seç...</option>
+                </select>
             </div>
         </div>
         <div class="panel-body">
@@ -575,6 +583,89 @@
     // Buraya doğrudan erişilebilir bir URL verin (http/https veya public link).
     // CORS izni olan herhangi bir link çalışır.
     const EKLENECEK_URL = 'https://raw.githubusercontent.com/Kafeinsiz/Kafeinsiz.github.io/main/Eklenecek.jpg';
+
+    // ── GitHub Taslak Raporlar ────────────────────────────────────────────────
+    const GITHUB_API_URL = 'https://api.github.com/repos/Kafeinsiz/Kafeinsiz.github.io/contents/taslaklar';
+
+    async function taslaklarYukle() {
+        const sel = document.getElementById('taslaklarSelect');
+        try {
+            // Önce ana klasörü oku
+            const r = await fetch(GITHUB_API_URL);
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const items = await r.json();
+
+            // Alt klasörleri ve dosyaları ayır
+            const altKlasorler = items.filter(f => f.type === 'dir');
+            const kokleDosyalar = items.filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.docx'));
+
+            sel.innerHTML = '<option value="">📂 Taslak Seç...</option>';
+
+            // Kök seviyedeki dosyalar (varsa)
+            if (kokleDosyalar.length > 0) {
+                const grp = document.createElement('optgroup');
+                grp.label = '— Genel —';
+                kokleDosyalar.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.download_url;
+                    opt.textContent = f.name.replace(/\.docx$/i, '');
+                    grp.appendChild(opt);
+                });
+                sel.appendChild(grp);
+            }
+
+            // Alt klasörleri paralel olarak getir
+            await Promise.all(altKlasorler.map(async klasor => {
+                const r2 = await fetch(klasor.url);
+                if (!r2.ok) return;
+                const dosyalar = await r2.json();
+                const docxlar = dosyalar.filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.docx'));
+                if (docxlar.length === 0) return;
+
+                const grp = document.createElement('optgroup');
+                grp.label = klasor.name;
+                docxlar.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.download_url;
+                    opt.textContent = f.name.replace(/\.docx$/i, '');
+                    grp.appendChild(opt);
+                });
+                sel.appendChild(grp);
+            }));
+
+            if (sel.options.length === 1) {
+                sel.innerHTML = '<option value="">📂 Taslak bulunamadı</option>';
+            }
+        } catch(err) {
+            console.warn('Taslaklar yüklenemedi:', err);
+            sel.innerHTML = '<option value="">📂 Bağlantı hatası</option>';
+        }
+    }
+    taslaklarYukle();
+
+    function taslaklardenSec(url) {
+        if (!url) return;
+        const sel = document.getElementById('taslaklarSelect');
+        const label = sel.options[sel.selectedIndex].text;
+        const statusEl = document.getElementById('wordStatus');
+        const btn = document.getElementById('wordLoadBtn');
+
+        btn.textContent = 'Yükleniyor...'; btn.disabled = true;
+        statusEl.textContent = '"' + label + '" indiriliyor...';
+
+        fetch(url)
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+            .then(buf => {
+                handleWordLoad(buf, label);
+                btn.textContent = 'Rapor Yükle'; btn.disabled = false;
+                sel.value = ''; // seçimi sıfırla
+            })
+            .catch(err => {
+                statusEl.textContent = '❌ İndirilemedi: ' + err.message;
+                btn.textContent = 'Rapor Yükle'; btn.disabled = false;
+                sel.value = '';
+            });
+    }
 
     (function loadEklenecek() {
         fetch(EKLENECEK_URL)
