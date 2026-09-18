@@ -584,57 +584,71 @@
     // CORS izni olan herhangi bir link çalışır.
     const EKLENECEK_URL = 'https://raw.githubusercontent.com/Kafeinsiz/Kafeinsiz.github.io/main/Eklenecek.jpg';
 
-    // ── GitHub Taslak Raporlar ────────────────────────────────────────────────
-    const GITHUB_API_URL = 'https://api.github.com/repos/Kafeinsiz/Kafeinsiz.github.io/contents/Taslaklar';
+    // ── Google Drive Taslak Raporlar ─────────────────────────────────────────
+    const DRIVE_API_KEY   = 'AIzaSyAlSVJDMA54RWHobVvHsPbHoOOl_SwZT54';
+    const DRIVE_ROOT_ID   = '1geB-IUeGgyUphWxkEf0dOtSWJ4eD9OuY';
+    const DRIVE_API_BASE  = 'https://www.googleapis.com/drive/v3';
+
+    async function driveList(folderId) {
+        const q   = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+        const url = `${DRIVE_API_BASE}/files?q=${q}&fields=files(id,name,mimeType)&key=${DRIVE_API_KEY}&orderBy=name`;
+        const r   = await fetch(url);
+        if (!r.ok) throw new Error('Drive HTTP ' + r.status);
+        const data = await r.json();
+        return data.files || [];
+    }
 
     async function taslaklarYukle() {
         const sel = document.getElementById('taslaklarSelect');
+        sel.innerHTML = '<option value="">⏳ Yükleniyor...</option>';
         try {
-            // Önce ana klasörü oku
-            const r = await fetch(GITHUB_API_URL);
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            const items = await r.json();
-
-            // Alt klasörleri ve dosyaları ayır
-            const altKlasorler = items.filter(f => f.type === 'dir');
-            const kokleDosyalar = items.filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.docx'));
+            const items      = await driveList(DRIVE_ROOT_ID);
+            const altKlasorler = items.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+            const kokDosyalar  = items.filter(f => f.mimeType !== 'application/vnd.google-apps.folder'
+                                                && f.name.toLowerCase().endsWith('.docx'));
 
             sel.innerHTML = '<option value="">📂 Taslak Seç...</option>';
 
-            // Kök seviyedeki dosyalar (varsa)
-            if (kokleDosyalar.length > 0) {
+            // Kök seviyedeki dosyalar
+            if (kokDosyalar.length > 0) {
                 const grp = document.createElement('optgroup');
                 grp.label = '— Genel —';
-                kokleDosyalar.forEach(f => {
+                kokDosyalar.forEach(f => {
                     const opt = document.createElement('option');
-                    opt.value = f.download_url;
+                    opt.value = f.id;
                     opt.textContent = f.name.replace(/\.docx$/i, '');
+                    opt.title = f.name.replace(/\.docx$/i, ''); // hover tooltip
                     grp.appendChild(opt);
                 });
                 sel.appendChild(grp);
             }
 
-            // Alt klasörleri paralel olarak getir
-            await Promise.all(altKlasorler.map(async klasor => {
-                const r2 = await fetch(klasor.url);
-                if (!r2.ok) return;
-                const dosyalar = await r2.json();
-                const docxlar = dosyalar.filter(f => f.type === 'file' && f.name.toLowerCase().endsWith('.docx'));
-                if (docxlar.length === 0) return;
+            // Alt klasörler — paralel yükle, sonra alfabetik sırala
+            const altGruplar = await Promise.all(altKlasorler.map(async klasor => {
+                const dosyalar = await driveList(klasor.id);
+                const docxlar  = dosyalar.filter(f => f.name.toLowerCase().endsWith('.docx'));
+                return { klasorAdi: klasor.name, dosyalar: docxlar };
+            }));
 
+            // Alfabetik sırala
+            altGruplar.sort((a, b) => a.klasorAdi.localeCompare(b.klasorAdi, 'tr'));
+
+            altGruplar.forEach(({ klasorAdi, dosyalar }) => {
+                if (dosyalar.length === 0) return;
                 const grp = document.createElement('optgroup');
-                grp.label = klasor.name;
-                docxlar.forEach(f => {
+                grp.label = klasorAdi;
+                dosyalar.forEach(f => {
                     const opt = document.createElement('option');
-                    opt.value = f.download_url;
+                    opt.value = f.id;
                     opt.textContent = f.name.replace(/\.docx$/i, '');
+                    opt.title = klasorAdi + ' / ' + f.name.replace(/\.docx$/i, '');
                     grp.appendChild(opt);
                 });
                 sel.appendChild(grp);
-            }));
+            });
 
             if (sel.options.length === 1) {
-                sel.innerHTML = '<option value="">📂 Taslak bulunamadı</option>';
+                sel.innerHTML = '<option value="">📂 Dosya bulunamadı</option>';
             }
         } catch(err) {
             console.warn('Taslaklar yüklenemedi:', err);
@@ -643,22 +657,25 @@
     }
     taslaklarYukle();
 
-    function taslaklardenSec(url) {
-        if (!url) return;
-        const sel = document.getElementById('taslaklarSelect');
-        const label = sel.options[sel.selectedIndex].text;
+    function taslaklardenSec(fileId) {
+        if (!fileId) return;
+        const sel     = document.getElementById('taslaklarSelect');
+        const opt     = sel.options[sel.selectedIndex];
+        const label   = opt ? opt.textContent : 'Taslak';
+        const tooltip = opt ? (opt.title || label) : label;
         const statusEl = document.getElementById('wordStatus');
-        const btn = document.getElementById('wordLoadBtn');
+        const btn      = document.getElementById('wordLoadBtn');
 
         btn.textContent = 'Yükleniyor...'; btn.disabled = true;
-        statusEl.textContent = '"' + label + '" indiriliyor...';
+        statusEl.textContent = '"' + tooltip + '" indiriliyor...';
 
-        fetch(url)
+        const dlUrl = `${DRIVE_API_BASE}/files/${fileId}?alt=media&key=${DRIVE_API_KEY}`;
+        fetch(dlUrl)
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
             .then(buf => {
                 handleWordLoad(buf, label);
                 btn.textContent = 'Rapor Yükle'; btn.disabled = false;
-                sel.value = ''; // seçimi sıfırla
+                sel.value = '';
             })
             .catch(err => {
                 statusEl.textContent = '❌ İndirilemedi: ' + err.message;
