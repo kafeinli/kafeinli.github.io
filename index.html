@@ -852,19 +852,44 @@
         }
 
         const zip = new JSZip();
-        const mainFolder = zip.folder('Urun_Klasorleri');
-        folderNames.forEach(name => {
-            const safeName = name.replace(/[<>:"/\\|?*]/g, '');
-            mainFolder.folder(safeName);
-        });
+
+        // Tarih + Müşteri + Fabrika üçü de varsa özel yapı
+        const tarih   = pendingTarih;
+        const musteri = pendingMusteriKisaAd || (pendingMusteriUnvan ? pendingMusteriUnvan.split(' ')[0] : null);
+        const fabrika = pendingFabrikaUnvan  ? pendingFabrikaUnvan.split(' ')[0] : null;
+
+        if (tarih && musteri && fabrika) {
+            // "(Tarih) (Müşteri) (Fabrika)" ana klasör
+            const anaAd = tarih + ' ' + musteri + ' ' + fabrika;
+            const safe  = anaAd.replace(/[<>:"/\\|?*]/g, '');
+            const anaKlasor = zip.folder(safe);
+
+            // Fotoğraflar ve Drop Video alt klasörleri + ürün klasörleri
+            const fotograflar = anaKlasor.folder('Fotoğraflar');
+            const dropVideo   = anaKlasor.folder('Drop Video');
+
+            folderNames.forEach(urun => {
+                const safeUrun = urun.replace(/[<>:"/\\|?*]/g, '');
+                fotograflar.folder(safeUrun);
+                dropVideo.folder(safeUrun);
+            });
+
+            statusEl.textContent = '✅ ' + safe + ' — ' + folderNames.length + ' ürün klasörü';
+        } else {
+            // Eksik bilgi varsa düz yapı
+            const mainFolder = zip.folder('Urun_Klasorleri');
+            folderNames.forEach(name => {
+                mainFolder.folder(name.replace(/[<>:"/\\|?*]/g, ''));
+            });
+            const eksik = [!tarih&&'Tarih', !musteri&&'Müşteri', !fabrika&&'Fabrika'].filter(Boolean);
+            statusEl.textContent = '✅ ' + folderNames.length + ' klasör oluşturuldu (düz yapı — eksik: ' + eksik.join(', ') + ')';
+        }
 
         const content = await zip.generateAsync({ type: 'blob' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(content);
-        link.download = 'Uretim_Klasor_Yapisi.zip';
+        link.download = 'Klasor_Yapisi.zip';
         link.click();
-
-        statusEl.textContent = '✅ Klasör yapısı indirildi: ' + folderNames.length + ' klasör';
     }
 
     // ── Uyarı kutusu ─────────────────────────────────────────────────────────
