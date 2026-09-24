@@ -12,7 +12,7 @@
 
 
         .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; min-width: 0; }
-        .panel { background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); display: flex; flex-direction: column; min-height: 300px; min-width: 0; overflow: hidden; }
+        .panel { background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); display: flex; flex-direction: column; min-height: 300px; min-width: 0; overflow: visible; }
         .panel-header { padding: 12px 16px; color: white; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; gap: 8px; flex-wrap: wrap; }
         .word-header { background: var(--word-color); }
         .manual-header { background: var(--manual-color); }
@@ -36,9 +36,10 @@
             background: rgba(255,255,255,0.15); color: white; font-size: 12px; font-weight: 600;
             cursor: pointer; white-space: nowrap; }
         .taslak-toggle-btn:hover { background: rgba(255,255,255,0.25); }
-        .taslak-menu { display: none; position: absolute; top: calc(100% + 4px); left: 0;
-            min-width: 220px; max-width: 300px; background: #1a2a4a; border-radius: 8px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.35); z-index: 500; overflow: hidden; }
+        .taslak-menu { display: none; position: fixed;
+            min-width: 240px; max-width: 320px; max-height: 70vh; overflow-y: auto;
+            background: #1a2a4a; border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.35); z-index: 9999; }
         .taslak-menu.acik { display: block; }
         .taslak-klasor { display: flex; align-items: center; justify-content: space-between;
             padding: 8px 14px; font-size: 12px; font-weight: 700; color: #aac4ff;
@@ -621,7 +622,16 @@
     function toggleTaslaklarMenu(e) {
         e.stopPropagation();
         const menu = document.getElementById('taslaklarMenu');
-        menu.classList.toggle('acik');
+        const btn  = document.getElementById('taslaklarBtn');
+        const rect = btn.getBoundingClientRect();
+        if (menu.classList.contains('acik')) {
+            menu.classList.remove('acik');
+        } else {
+            // Butona göre fixed konumlandır
+            menu.style.top  = (rect.bottom + 4) + 'px';
+            menu.style.left = rect.left + 'px';
+            menu.classList.add('acik');
+        }
     }
     // Dışarı tıklanınca kapat
     document.addEventListener('click', function(e) {
