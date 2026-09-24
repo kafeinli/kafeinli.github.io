@@ -30,13 +30,29 @@
 
         /* ── Word header controls ── */
         .word-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .taslak-select { padding: 5px 8px; border-radius: 5px; border: 1.5px solid rgba(255,255,255,0.5);
-            background: rgba(255,255,255,0.15); color: white; font-size: 12px; outline: none;
-            cursor: pointer; max-width: 180px; }
-        .taslak-select option { background: #1a3a6b; color: white; }
-        .taslak-select optgroup { background: #0f2347; color: #aac4ff; font-style: normal; font-weight: 700; }
-        .taslak-select optgroup option { background: #1a3a6b; color: white; font-weight: 400; padding-left: 8px; }
-        .taslak-select:disabled { opacity: 0.5; cursor: default; }
+        /* ── Taslak ağaç menü ── */
+        .taslak-wrap { position: relative; }
+        .taslak-toggle-btn { padding: 5px 10px; border-radius: 5px; border: 1.5px solid rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.15); color: white; font-size: 12px; font-weight: 600;
+            cursor: pointer; white-space: nowrap; }
+        .taslak-toggle-btn:hover { background: rgba(255,255,255,0.25); }
+        .taslak-menu { display: none; position: absolute; top: calc(100% + 4px); left: 0;
+            min-width: 220px; max-width: 300px; background: #1a2a4a; border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.35); z-index: 500; overflow: hidden; }
+        .taslak-menu.acik { display: block; }
+        .taslak-klasor { display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 14px; font-size: 12px; font-weight: 700; color: #aac4ff;
+            cursor: pointer; user-select: none; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .taslak-klasor:hover { background: rgba(255,255,255,0.08); }
+        .taslak-klasor-arrow { font-size: 10px; transition: transform 0.2s; }
+        .taslak-klasor.acik .taslak-klasor-arrow { transform: rotate(90deg); }
+        .taslak-dosyalar { display: none; background: rgba(0,0,0,0.2); }
+        .taslak-dosyalar.acik { display: block; }
+        .taslak-dosya { padding: 7px 14px 7px 24px; font-size: 12px; color: #dde8ff;
+            cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.04);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .taslak-dosya:hover { background: rgba(255,255,255,0.1); color: white; }
+        .taslak-yukleniyor { padding: 12px 14px; font-size: 12px; color: #aac4ff; }
 
         /* ── Manual header controls ── */
         .manual-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -109,9 +125,10 @@
             <div class="word-controls">
                 <input type="file" id="wordInp" accept=".docx" hidden>
                 <button class="btn btn-white" id="wordLoadBtn" onclick="document.getElementById('wordInp').click()">Rapor Yükle</button>
-                <select id="taslaklarSelect" class="taslak-select" onchange="taslaklardenSec(this.value)" title="GitHub'daki taslak raporlar">
-                    <option value="">📂 Taslak Seç...</option>
-                </select>
+                <div class="taslak-wrap" id="taslaklarWrap">
+                    <button class="taslak-toggle-btn" id="taslaklarBtn" onclick="toggleTaslaklarMenu(event)">📂 Taslak Seç ▾</button>
+                    <div class="taslak-menu" id="taslaklarMenu"></div>
+                </div>
             </div>
         </div>
         <div class="panel-body">
@@ -600,76 +617,96 @@
         return data.files || [];
     }
 
+    // ── Taslak ağaç menü ─────────────────────────────────────────────────────
+    function toggleTaslaklarMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('taslaklarMenu');
+        menu.classList.toggle('acik');
+    }
+    // Dışarı tıklanınca kapat
+    document.addEventListener('click', function(e) {
+        const wrap = document.getElementById('taslaklarWrap');
+        if (wrap && !wrap.contains(e.target)) {
+            document.getElementById('taslaklarMenu').classList.remove('acik');
+        }
+    });
+
     async function taslaklarYukle() {
-        const sel = document.getElementById('taslaklarSelect');
-        sel.innerHTML = '<option value="">⏳ Yükleniyor...</option>';
+        const menu = document.getElementById('taslaklarMenu');
+        menu.innerHTML = '<div class="taslak-yukleniyor">⏳ Yükleniyor...</div>';
         try {
-            const items      = await driveList(DRIVE_ROOT_ID);
+            const items        = await driveList(DRIVE_ROOT_ID);
             const altKlasorler = items.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
             const kokDosyalar  = items.filter(f => f.mimeType !== 'application/vnd.google-apps.folder'
                                                 && f.name.toLowerCase().endsWith('.docx'));
+            menu.innerHTML = '';
 
-            sel.innerHTML = '<option value="">📂 Taslak Seç...</option>';
-
-            // Kök seviyedeki dosyalar
+            // Kök dosyalar (varsa)
             if (kokDosyalar.length > 0) {
-                const grp = document.createElement('optgroup');
-                grp.label = '— Genel —';
+                const grpEl = document.createElement('div');
+                grpEl.className = 'taslak-klasor acik';
+                grpEl.innerHTML = '<span>📄 Genel</span><span class="taslak-klasor-arrow">▶</span>';
+                const dosyaEl = document.createElement('div');
+                dosyaEl.className = 'taslak-dosyalar acik';
                 kokDosyalar.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f.id;
-                    opt.textContent = f.name.replace(/\.docx$/i, '');
-                    opt.title = f.name.replace(/\.docx$/i, ''); // hover tooltip
-                    grp.appendChild(opt);
+                    const d = document.createElement('div');
+                    d.className = 'taslak-dosya';
+                    d.textContent = f.name.replace(/\.docx$/i, '');
+                    d.title = f.name.replace(/\.docx$/i, '');
+                    d.onclick = () => taslaklardenSec(f.id, d.textContent);
+                    dosyaEl.appendChild(d);
                 });
-                sel.appendChild(grp);
+                grpEl.onclick = () => { grpEl.classList.toggle('acik'); dosyaEl.classList.toggle('acik'); };
+                menu.appendChild(grpEl);
+                menu.appendChild(dosyaEl);
             }
 
-            // Alt klasörler — paralel yükle, sonra alfabetik sırala
+            // Alt klasörler
             const altGruplar = await Promise.all(altKlasorler.map(async klasor => {
                 const dosyalar = await driveList(klasor.id);
-                const docxlar  = dosyalar.filter(f => f.name.toLowerCase().endsWith('.docx'));
-                return { klasorAdi: klasor.name, dosyalar: docxlar };
+                return { klasorAdi: klasor.name, klasorId: klasor.id,
+                         dosyalar: dosyalar.filter(f => f.name.toLowerCase().endsWith('.docx')) };
             }));
-
-            // Alfabetik sırala
             altGruplar.sort((a, b) => a.klasorAdi.localeCompare(b.klasorAdi, 'tr'));
 
             altGruplar.forEach(({ klasorAdi, dosyalar }) => {
                 if (dosyalar.length === 0) return;
-                const grp = document.createElement('optgroup');
-                grp.label = klasorAdi;
+                const grpEl = document.createElement('div');
+                grpEl.className = 'taslak-klasor';
+                grpEl.innerHTML = '<span>📁 ' + klasorAdi + '</span><span class="taslak-klasor-arrow">▶</span>';
+                const dosyaEl = document.createElement('div');
+                dosyaEl.className = 'taslak-dosyalar';
                 dosyalar.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f.id;
-                    opt.textContent = f.name.replace(/\.docx$/i, '');
-                    opt.title = klasorAdi + ' / ' + f.name.replace(/\.docx$/i, '');
-                    grp.appendChild(opt);
+                    const d = document.createElement('div');
+                    d.className = 'taslak-dosya';
+                    d.textContent = f.name.replace(/\.docx$/i, '');
+                    d.title = klasorAdi + ' / ' + f.name.replace(/\.docx$/i, '');
+                    d.onclick = (e) => { e.stopPropagation(); taslaklardenSec(f.id, d.textContent); };
+                    dosyaEl.appendChild(d);
                 });
-                sel.appendChild(grp);
+                grpEl.onclick = () => { grpEl.classList.toggle('acik'); dosyaEl.classList.toggle('acik'); };
+                menu.appendChild(grpEl);
+                menu.appendChild(dosyaEl);
             });
 
-            if (sel.options.length === 1) {
-                sel.innerHTML = '<option value="">📂 Dosya bulunamadı</option>';
+            if (!menu.children.length) {
+                menu.innerHTML = '<div class="taslak-yukleniyor">📂 Dosya bulunamadı</div>';
             }
         } catch(err) {
             console.warn('Taslaklar yüklenemedi:', err);
-            sel.innerHTML = '<option value="">📂 Bağlantı hatası</option>';
+            menu.innerHTML = '<div class="taslak-yukleniyor">❌ Bağlantı hatası</div>';
         }
     }
     taslaklarYukle();
 
-    function taslaklardenSec(fileId) {
-        if (!fileId) return;
-        const sel     = document.getElementById('taslaklarSelect');
-        const opt     = sel.options[sel.selectedIndex];
-        const label   = opt ? opt.textContent : 'Taslak';
-        const tooltip = opt ? (opt.title || label) : label;
+    function taslaklardenSec(fileId, label) {
         const statusEl = document.getElementById('wordStatus');
         const btn      = document.getElementById('wordLoadBtn');
+        document.getElementById('taslaklarMenu').classList.remove('acik');
+        document.getElementById('taslaklarBtn').textContent = '📂 ' + label + ' ▾';
 
         btn.textContent = 'Yükleniyor...'; btn.disabled = true;
-        statusEl.textContent = '"' + tooltip + '" indiriliyor...';
+        statusEl.textContent = '"' + label + '" indiriliyor...';
 
         const dlUrl = `${DRIVE_API_BASE}/files/${fileId}?alt=media&key=${DRIVE_API_KEY}`;
         fetch(dlUrl)
@@ -677,12 +714,11 @@
             .then(buf => {
                 handleWordLoad(buf, label);
                 btn.textContent = 'Rapor Yükle'; btn.disabled = false;
-                sel.value = '';
+                document.getElementById('taslaklarBtn').textContent = '📂 Taslak Seç ▾';
             })
             .catch(err => {
                 statusEl.textContent = '❌ İndirilemedi: ' + err.message;
                 btn.textContent = 'Rapor Yükle'; btn.disabled = false;
-                sel.value = '';
             });
     }
 
