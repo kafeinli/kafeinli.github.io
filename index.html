@@ -293,7 +293,8 @@
     let denetciSirasi = [];   // [{isim, imzaBuffer}]
     let imzaDosyaMap  = {};   // {isim: driveFileId}
 
-    (async function imzalariYukle() {
+    // İmzalar Drive'dan sayfa açılınca yüklenir — taslaklarYukle() çağrısından sonra
+    async function imzalariYukle() {
         try {
             const files = await driveList(IMZA_KLASOR_ID);
             files.forEach(f => {
@@ -301,7 +302,7 @@
                 imzaDosyaMap[isim] = f.id;
             });
         } catch(e) { console.warn('İmzalar yüklenemedi:', e); }
-    })();
+    }
 
     async function denetciEkle(isim) {
         if (!isim || denetciSirasi.find(d => d.isim === isim)) return;
@@ -771,6 +772,7 @@
         }
     }
     taslaklarYukle();
+    imzalariYukle();
 
     function taslaklardenSec(fileId, label) {
         const statusEl = document.getElementById('wordStatus');
