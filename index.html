@@ -1270,12 +1270,28 @@
             // XMLSerializer — tablo güncellemelerini string'e çevir
             let finalDocXml = new XMLSerializer().serializeToString(xmlDoc);
 
-            // ── Denetçi — string üzerinde işle (namespace bozulmasını önler) ─
+// ── Denetçi — string üzerinde işle (namespace bozulmasını önler) ─
             if (denetciPending && denetciSirasi.length > 0) {
                 denetciPending = false;
                 const CX = 126425, CY = 84447;
                 const relType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
                 const relsPath = 'word/_rels/document.xml.rels';
+
+                // Türkçe/Özel karakterleri ASCII standartlarına çeviren fonksiyon (ZIP & OOXML Id uyumu için)
+                const sanitizeFileName = (str) => {
+                    const trMap = {
+                        'ç': 'c', 'Ç': 'C',
+                        'ğ': 'g', 'Ğ': 'G',
+                        'ı': 'i', 'İ': 'I',
+                        'ö': 'o', 'Ö': 'O',
+                        'ş': 's', 'Ş': 'S',
+                        'ü': 'u', 'Ü': 'U'
+                    };
+                    return str
+                        .replace(/[çÇğĞıİöÖşŞüÜ]/g, letter => trMap[letter])
+                        .replace(/[^a-zA-Z0-9_]/g, '_')
+                        .replace(/_+/g, '_');
+                };
 
                 // Denetçi hücresini bul — "Enes ARSLANTÜRK" veya mevcut denetçi adını içeren paragrafı
                 // Hücre: Satır 19, Hücre 1 — mevcut içeriği temizleyip yenisini yaz
@@ -1302,9 +1318,12 @@
                         // İmzayı zip'e ekle ve rId oluştur
                         let drawingRun = '';
                         if (det.imzaBuffer) {
-                            const imzaFileName = 'media/imza_' + det.isim.replace(/\s+/g,'_') + '.jpeg';
+                            // Türkçe karakterlerden ve özel simgelerden arındırılmış güvenli isim
+                            const safeIsim = sanitizeFileName(det.isim);
+
+                            const imzaFileName = 'media/imza_' + safeIsim + '.jpeg';
                             zip.file('word/' + imzaFileName, det.imzaBuffer);
-                            const newRId = 'rIdImza_' + det.isim.replace(/[\s]+/g,'_');
+                            const newRId = 'rIdImza_' + safeIsim;
                             let relsXml = zip.file(relsPath).asText();
                             if (!relsXml.includes(newRId)) {
                                 relsXml = relsXml.replace('</Relationships>',
