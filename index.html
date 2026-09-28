@@ -292,6 +292,7 @@
     const IMZA_KLASOR_ID = '1HEiTwxGFY7QGMGR0FqVK4zOGDOPa1eYH';
     let denetciSirasi = [];   // [{isim, imzaBuffer}]
     let imzaDosyaMap  = {};   // {isim: driveFileId}
+    let denetciPending = false;
 
     // İmzalar Drive'dan sayfa açılınca yüklenir — taslaklarYukle() çağrısından sonra
     async function imzalariYukle() {
@@ -1106,60 +1107,12 @@
                     }
                 }
 
-                // ── Denetçi güncelleme ────────────────────────────────────────
-                // Satır 19, Hücre 1: isim + imza (inline drawing)
-                // Her seçilen denetçi için ayrı paragraf — alt alta
+                // ── Denetçi güncelleme — string tabanlı, XMLSerializer sonrası ─
+                // DOM'a parse edip appendChild yapmak namespace'leri bozuyor.
+                // Bunun yerine: XMLSerializer çıktısı üzerinde denetçi hücresini
+                // string replace ile güncelliyoruz.
                 if (denetciSirasi.length > 0) {
-                    const denetciRow = hrows[19];
-                    if (denetciRow) {
-                        const denetciTC = ch(denetciRow, 'tc')[1];
-                        if (denetciTC) {
-                            // Hücredeki mevcut paragrafları temizle
-                            const mevcutParalar = ch(denetciTC, 'p');
-                            mevcutParalar.forEach(p => { if (p.parentNode === denetciTC) denetciTC.removeChild(p); });
-
-                            // İmza görsel boyutu — orijinal rapordaki gibi küçük (≈1cm × 0.7cm)
-                            const CX = 126425, CY = 84447;
-
-                            for (const det of denetciSirasi) {
-                                const p = xmlDoc.createElementNS(W, 'w:p');
-
-                                // İsim run
-                                const rIsim = xmlDoc.createElementNS(W, 'w:r');
-                                const tIsim = xmlDoc.createElementNS(W, 'w:t');
-                                tIsim.setAttribute('xml:space', 'preserve');
-                                tIsim.textContent = det.isim + '  ';
-                                rIsim.appendChild(tIsim);
-                                p.appendChild(rIsim);
-
-                                // İmza run (eğer buffer varsa)
-                                if (det.imzaBuffer) {
-                                    // İmajı zip'e ekle
-                                    const imzaFileName = 'media/imza_' + det.isim.replace(/\s+/g,'_') + '.jpeg';
-                                    zip.file('word/' + imzaFileName, det.imzaBuffer);
-
-                                    // Rels'e yeni rId ekle
-                                    const relsPath = 'word/_rels/document.xml.rels';
-                                    let relsXml = zip.file(relsPath).asText();
-                                    const newRId = 'rIdImza_' + det.isim.replace(/\s+/g,'_');
-                                    const relType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
-                                    if (!relsXml.includes(newRId)) {
-                                        relsXml = relsXml.replace('</Relationships>',
-                                            `<Relationship Id="${newRId}" Type="${relType}" Target="${imzaFileName}"/></Relationships>`);
-                                        zip.file(relsPath, relsXml);
-                                    }
-
-                                    // Drawing XML string olarak oluştur
-                                    const drawingXml = `<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${CX}" cy="${CY}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${Math.floor(Math.random()*9000000)+1000000}" name="${det.isim}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${det.isim}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="${newRId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="${CX}" cy="${CY}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
-                                    const drawingFrag = new DOMParser().parseFromString(drawingXml, 'text/xml').documentElement;
-                                    p.appendChild(drawingFrag);
-                                }
-
-                                denetciTC.appendChild(p);
-                            }
-                            log.push('✅ Denetçi: ' + denetciSirasi.map(d=>d.isim).join(', '));
-                        }
-                    }
+                    denetciPending = true; // executeRevise sonunda string adımı tetiklenecek
                 }
             }
 
@@ -1314,12 +1267,76 @@
             }
 
             // Güncel xmlDoc'u zip'e yaz
-            zip.file("word/document.xml", new XMLSerializer().serializeToString(xmlDoc));
+            // XMLSerializer — tablo güncellemelerini string'e çevir
+            let finalDocXml = new XMLSerializer().serializeToString(xmlDoc);
+
+            // ── Denetçi — string üzerinde işle (namespace bozulmasını önler) ─
+            if (denetciPending && denetciSirasi.length > 0) {
+                denetciPending = false;
+                const CX = 126425, CY = 84447;
+                const relType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+                const relsPath = 'word/_rels/document.xml.rels';
+
+                // Denetçi hücresini bul — "Enes ARSLANTÜRK" veya mevcut denetçi adını içeren paragrafı
+                // Hücre: Satır 19, Hücre 1 — mevcut içeriği temizleyip yenisini yaz
+                // Strateji: <w:tc> içindeki tüm <w:p>...</w:p> bloklarını yeni içerikle değiştir
+                // Önce hücreyi tespit et: "Denetçi:" label'ının olduğu satırın ikinci hücresi
+
+                // Orijinal XML'den denetçi hücresinin tam içeriğini bul
+                // "<w:tc>" bloklarını tara, içinde "Denetçi" içereni bul, bir sonraki tc içeriğini değiştir
+                const tcBlocks = [...finalDocXml.matchAll(/<w:tc>([\s\S]*?)<\/w:tc>/g)];
+                let denetciTcIndex = -1;
+                for (let i = 0; i < tcBlocks.length; i++) {
+                    if (tcBlocks[i][1].includes('Denet') && tcBlocks[i][1].includes('w:t')) {
+                        denetciTcIndex = i + 1; // bir sonraki hücre
+                        break;
+                    }
+                }
+
+                if (denetciTcIndex >= 0 && denetciTcIndex < tcBlocks.length) {
+                    const hedefTC = tcBlocks[denetciTcIndex];
+
+                    // Yeni paragrafları oluştur
+                    let yeniParalar = '';
+                    for (const det of denetciSirasi) {
+                        // İmzayı zip'e ekle ve rId oluştur
+                        let drawingRun = '';
+                        if (det.imzaBuffer) {
+                            const imzaFileName = 'media/imza_' + det.isim.replace(/\s+/g,'_') + '.jpeg';
+                            zip.file('word/' + imzaFileName, det.imzaBuffer);
+                            const newRId = 'rIdImza_' + det.isim.replace(/[\s]+/g,'_');
+                            let relsXml = zip.file(relsPath).asText();
+                            if (!relsXml.includes(newRId)) {
+                                relsXml = relsXml.replace('</Relationships>',
+                                    `<Relationship Id="${newRId}" Type="${relType}" Target="${imzaFileName}"/></Relationships>`);
+                                zip.file(relsPath, relsXml);
+                            }
+                            const docPrId = Math.floor(Math.random()*9000000)+1000000;
+                            drawingRun = `<w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${CX}" cy="${CY}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${docPrId}" name="imza${docPrId}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${docPrId}" name="imza${docPrId}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="${newRId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" cstate="print"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="${CX}" cy="${CY}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+                        }
+                        yeniParalar += `<w:p><w:r><w:t xml:space="preserve">${det.isim}  </w:t></w:r>${drawingRun}</w:p>`;
+                    }
+
+                    // Hücrenin mevcut <w:p>...</w:p> bloklarını yenisiyle değiştir
+                    // Hücrenin özelliklerini (w:tcPr) koru
+                    const eskiTcIcerik = hedefTC[0]; // tam <w:tc>...</w:tc>
+                    const tcPrMatch = eskiTcIcerik.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
+                    const tcPr = tcPrMatch ? tcPrMatch[0] : '';
+                    const yeniTC = `<w:tc>${tcPr}${yeniParalar}</w:tc>`;
+                    finalDocXml = finalDocXml.replace(eskiTcIcerik, yeniTC);
+                    log.push('✅ Denetçi: ' + denetciSirasi.map(d=>d.isim).join(', '));
+                }
+            }
 
             // Adım 3: Resim temizleme
             if (document.getElementById('resimTemizle').checked) {
+                // replaceImages, zip'teki document.xml'i string olarak okur
+                // Önce finalDocXml'i zip'e yaz, sonra replaceImages üzerinde çalışsın
+                zip.file("word/document.xml", finalDocXml);
                 const imgCount = replaceImages(zip);
                 log.push('✅ Resim değiştirildi: '+imgCount+' adet');
+            } else {
+                zip.file("word/document.xml", finalDocXml);
             }
 
             // ── Yazar bilgisini güncelle (docProps/core.xml) ─────────────────
