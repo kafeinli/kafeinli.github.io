@@ -1025,11 +1025,16 @@
         const btn = document.getElementById('reviseBtn');
         btn.textContent='İşleniyor...'; btn.disabled=true;
 
-        try {
+try {
             const zip = new PizZip(globalWordBuffer);
             const xml = zip.file("word/document.xml").asText();
             const xmlDoc = new DOMParser().parseFromString(xml,"text/xml");
             const ex = globalExcelData, wd = globalWordData;
+            
+            // EKSİK OLAN DEĞİŞKENLERİ BURAYA TANIMLIYORUZ
+            const exN = ex.itemCode.length;
+            const wdN = wd.itemCode.length; 
+            
             const log = [];
 
             // Rapor no
