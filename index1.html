@@ -1098,13 +1098,14 @@ try {
                     log.push('🗑️ Silinecek: ' + silinecekLog.join(', '));
                     log.push('⚠️ Tablolar el ile silinmeli! ' + silinecekWordSatirlar.size + ' kalem işaretlendi — adet, işçilik ve özet tablolarını Word\'de el ile silin.');
                 }
-	    }
-            // Aktif (silinmeyecek) word indeksleri ve veri haritası
+            }
+
+            // Aktif (silinmeyecek) word indeksleri
             const aktifWdIndeksler = [];
-            for (let i = 0; i < wdN; i++) {
+            for (let i = 0; i < wd.itemCode.length; i++) {
                 if (!silinecekWordSatirlar.has(i)) aktifWdIndeksler.push(i);
             }
-            const aktifN = Math.min(aktifWdIndeksler.length, exN);
+            const aktifN = Math.min(aktifWdIndeksler.length, N);
             const wdAktif = {};
             Object.keys(wd).forEach(key => {
                 wdAktif[key] = aktifWdIndeksler.map(i => (wd[key] && wd[key][i]) ? wd[key][i] : '-');
