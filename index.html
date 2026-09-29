@@ -135,7 +135,7 @@
         <div class="panel-body">
             <div class="status-msg" id="wordStatus"></div>
             <table class="data-table">
-                <thead><tr><th class="del-col"></th><th class="idx">#</th><th>Madde Kodu</th><th>Madde Adı</th><th>Barkod</th><th>Sevkiyat</th><th>Sipariş No</th><th>Örneklem</th><th>Majör</th><th>Minör</th></tr></thead>
+                <thead><tr><th class="idx">#</th><th>Madde Kodu</th><th>Madde Adı</th><th>Barkod</th><th>Sevkiyat</th><th>Sipariş No</th><th>Örneklem</th><th>Majör</th><th>Minör</th></tr></thead>
                 <tbody id="wordBody"></tbody>
             </table>
         </div>
@@ -295,23 +295,12 @@
     let denetciPending = false;
 
     // İmzalar Drive'dan sayfa açılınca yüklenir — taslaklarYukle() çağrısından sonra
-    function normalizeTR(str) {
-        return str.toLowerCase()
-            .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-            .replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c')
-            .replace(/Ğ/g,'g').replace(/Ü/g,'u').replace(/Ş/g,'s')
-            .replace(/İ/g,'i').replace(/Ö/g,'o').replace(/Ç/g,'c')
-            .replace(/\s+/g,'').trim();
-    }
-
     async function imzalariYukle() {
         try {
             const files = await driveList(IMZA_KLASOR_ID);
             files.forEach(f => {
                 const isim = f.name.replace(/\.[^.]+$/, '').trim();
-                // Hem orijinal hem normalize edilmiş isimle kaydet
                 imzaDosyaMap[isim] = f.id;
-                imzaDosyaMap[normalizeTR(isim)] = f.id;
             });
         } catch(e) { console.warn('İmzalar yüklenemedi:', e); }
     }
@@ -319,7 +308,7 @@
     async function denetciEkle(isim) {
         if (!isim || denetciSirasi.find(d => d.isim === isim)) return;
         let imzaBuffer = null;
-        const fileId = imzaDosyaMap[isim] || imzaDosyaMap[normalizeTR(isim)];
+        const fileId = imzaDosyaMap[isim];
         if (fileId) {
             try {
                 const r = await fetch(`${DRIVE_API_BASE}/files/${fileId}?alt=media&key=${DRIVE_API_KEY}`);
@@ -864,7 +853,6 @@
             };
 
             globalWordData = data;
-            silinecekWordSatirlar = new Set();
             renderToTable('wordBody', data, 'highlight');
             const rowCount = Math.max(...Object.values(data).map(a=>a.length));
             statusEl.textContent = '✅ ' + (label||'Rapor') + ' — ' + rowCount + ' kayıt yüklendi.';
@@ -1036,88 +1024,25 @@
             const raporNoInput = document.getElementById('raporNoInput').value.trim();
             let dosyaAdi = 'taslakrapor';
 
-            // ── Silinecek kalemler ────────────────────────────────────────────
-            // Kullanıcının işaretlediği word satırları raporda "SİLİNECEK" olarak
-            // işaretlenir, diğer verileri silinir. Excel eşleşmesinden dışlanır.
-            const silinecekLog = [];
-            if (silinecekWordSatirlar.size > 0) {
-                silinecekWordSatirlar.forEach(wIdx => {
-                    const maddeKodu = wd.itemCode[wIdx];
-                    const maddeAdi  = wd.itemName[wIdx];
-                    if (!maddeKodu && !maddeAdi) return;
-
-                    // Madde kodu ve adını "SİLİNECEK" ile değiştir
-                    if (maddeKodu && maddeKodu !== '-') bulkReplace(xmlDoc, maddeKodu, 'SİLİNECEK');
-                    if (maddeAdi  && maddeAdi  !== '-') bulkReplace(xmlDoc, maddeAdi,  'SİLİNECEK');
-
-                    // Diğer verileri (barkod, sevkiyat, sipariş, örneklem, limitler) temizle
-                    ['barcode','shipQty','orderNo','sampleSize','majorLimit','minorLimit'].forEach(key => {
-                        const val = wd[key] && wd[key][wIdx];
-                        if (val && val !== '-') bulkReplace(xmlDoc, val, '-');
-                    });
-
-                    silinecekLog.push(maddeKodu || maddeAdi);
-                });
-
-                // "SİLİNECEK" metnini sarı arka planla işaretle
-                // bulkReplace yerine xmlDoc'taki w:t nodlarını tara
-                const allT = xmlDoc.querySelectorAll ? xmlDoc.querySelectorAll('*') : [];
-                const tNodeList = xmlDoc.getElementsByTagNameNS(W, 't');
-                for (let i = 0; i < tNodeList.length; i++) {
-                    if (tNodeList[i].textContent === 'SİLİNECEK') {
-                        // Bu run'ın rPr'sine sarı highlight ekle
-                        const run = tNodeList[i].parentNode;
-                        if (!run) continue;
-                        let rPr = run.getElementsByTagNameNS(W, 'rPr')[0];
-                        if (!rPr) {
-                            rPr = xmlDoc.createElementNS(W, 'w:rPr');
-                            run.insertBefore(rPr, run.firstChild);
-                        }
-                        // Sarı highlight: <w:highlight w:val="yellow"/>
-                        const existing = rPr.getElementsByTagNameNS(W, 'highlight');
-                        if (existing.length === 0) {
-                            const hl = xmlDoc.createElementNS(W, 'w:highlight');
-                            hl.setAttributeNS(W, 'w:val', 'yellow');
-                            rPr.appendChild(hl);
-                        }
-                        // Üstü çizili: <w:strike/>
-                        const strikeExist = rPr.getElementsByTagNameNS(W, 'strike');
-                        if (strikeExist.length === 0) {
-                            const st = xmlDoc.createElementNS(W, 'w:strike');
-                            rPr.appendChild(st);
-                        }
-                    }
-                }
-
-                if (silinecekLog.length > 0) {
-                    log.push('🗑️ Silinecek: ' + silinecekLog.join(', '));
-                    log.push('⚠️ Tablolar el ile silinmeli! ' + silinecekWordSatirlar.size + ' kalem işaretlendi — adet, işçilik ve özet tablolarını Word\'de el ile silin.');
-                }
-
-            // Aktif (silinmeyecek) word indeksleri ve veri haritası
-            const aktifWdIndeksler = [];
-            for (let i = 0; i < wdN; i++) {
-                if (!silinecekWordSatirlar.has(i)) aktifWdIndeksler.push(i);
-            }
-            const aktifN = Math.min(aktifWdIndeksler.length, exN);
-            const wdAktif = {};
-            Object.keys(wd).forEach(key => {
-                wdAktif[key] = aktifWdIndeksler.map(i => (wd[key] && wd[key][i]) ? wd[key][i] : '-');
-            });
-
+            // Adım 1: Toplu bul-değiştir
+            // Sıra güvenliği: önce rapordaki değerleri placeholder'larla değiştir,
+            // sonra placeholder'ları Excel değerleriyle değiştir.
+            // Ürün sırası farklı olsa bile çakışma olmaz.
             const siraGuvenlik = document.getElementById('siraGuvenlik').checked;
             let bulkCount = 0;
 
             if (siraGuvenlik) {
+                // Aşama 1: rapordaki değer → benzersiz placeholder
                 const placeholders = [];
-                for (let i=0;i<aktifN;i++) {
+                for (let i=0;i<N;i++) {
                     const ph = { code: 'SSKODUXX'+i+'XX', name: 'SSADIXX'+i+'XX', barcode: 'SSBARKODXX'+i+'XX' };
                     placeholders.push(ph);
-                    if (wdAktif.itemCode[i]&&wdAktif.itemCode[i]!=='-') bulkCount+=bulkReplace(xmlDoc,wdAktif.itemCode[i],ph.code);
-                    if (wdAktif.itemName[i]&&wdAktif.itemName[i]!=='-') bulkCount+=bulkReplace(xmlDoc,wdAktif.itemName[i],ph.name);
-                    if (wdAktif.barcode[i] &&wdAktif.barcode[i]!=='-')  bulkCount+=bulkReplace(xmlDoc,wdAktif.barcode[i], ph.barcode);
+                    if (wd.itemCode[i]&&wd.itemCode[i]!=='-') bulkCount+=bulkReplace(xmlDoc,wd.itemCode[i],ph.code);
+                    if (wd.itemName[i]&&wd.itemName[i]!=='-') bulkCount+=bulkReplace(xmlDoc,wd.itemName[i],ph.name);
+                    if (wd.barcode[i] &&wd.barcode[i]!=='-')  bulkCount+=bulkReplace(xmlDoc,wd.barcode[i], ph.barcode);
                 }
-                for (let i=0;i<aktifN;i++) {
+                // Aşama 2: placeholder → Excel değeri
+                for (let i=0;i<N;i++) {
                     const ph = placeholders[i];
                     if (ex.itemCode[i]&&ex.itemCode[i]!=='-') bulkReplace(xmlDoc,ph.code,   ex.itemCode[i]);
                     if (ex.itemName[i]&&ex.itemName[i]!=='-') bulkReplace(xmlDoc,ph.name,   ex.itemName[i]);
@@ -1125,10 +1050,10 @@
                 }
                 log.push('✅ Toplu değiştirme (sıra güvenli): '+bulkCount+' paragraf');
             } else {
-                for (let i=0;i<aktifN;i++) {
-                    if (wdAktif.itemCode[i]&&ex.itemCode[i]&&wdAktif.itemCode[i]!==ex.itemCode[i]) bulkCount+=bulkReplace(xmlDoc,wdAktif.itemCode[i],ex.itemCode[i]);
-                    if (wdAktif.itemName[i]&&ex.itemName[i]&&wdAktif.itemName[i]!==ex.itemName[i]) bulkCount+=bulkReplace(xmlDoc,wdAktif.itemName[i],ex.itemName[i]);
-                    if (wdAktif.barcode[i]&&ex.barcode[i]&&wdAktif.barcode[i]!==ex.barcode[i]) bulkCount+=bulkReplace(xmlDoc,wdAktif.barcode[i],ex.barcode[i]);
+                for (let i=0;i<N;i++) {
+                    if (wd.itemCode[i]&&ex.itemCode[i]&&wd.itemCode[i]!==ex.itemCode[i]) bulkCount+=bulkReplace(xmlDoc,wd.itemCode[i],ex.itemCode[i]);
+                    if (wd.itemName[i]&&ex.itemName[i]&&wd.itemName[i]!==ex.itemName[i]) bulkCount+=bulkReplace(xmlDoc,wd.itemName[i],ex.itemName[i]);
+                    if (wd.barcode[i]&&ex.barcode[i]&&wd.barcode[i]!==ex.barcode[i]) bulkCount+=bulkReplace(xmlDoc,wd.barcode[i],ex.barcode[i]);
                 }
                 log.push('✅ Toplu değiştirme: '+bulkCount+' paragraf');
             }
@@ -1345,17 +1270,28 @@
             // XMLSerializer — tablo güncellemelerini string'e çevir
             let finalDocXml = new XMLSerializer().serializeToString(xmlDoc);
 
-            // ── Denetçi — orijinal ZIP'teki XML üzerinde işle ─────────────────
-            // XMLSerializer r:embed'i bozduğundan, orijinal document.xml string'ini
-            // temel alıp sadece denetçi hücresini değiştiriyoruz, diğer değişiklikleri
-            // (tablo güncellemeleri) finalDocXml'den alıyoruz.
-            // Strateji: denetçi TC'yi finalDocXml içinde bul ve orijinal namespace'leri
-            // koruyarak değiştir — r: prefix'i xmlns:r tanımı ile birlikte ekliyoruz.
+// ── Denetçi — string üzerinde işle (namespace bozulmasını önler) ─
             if (denetciPending && denetciSirasi.length > 0) {
                 denetciPending = false;
                 const CX = 126425, CY = 84447;
                 const relType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
                 const relsPath = 'word/_rels/document.xml.rels';
+
+                // Türkçe/Özel karakterleri ASCII standartlarına çeviren fonksiyon (ZIP & OOXML Id uyumu için)
+                const sanitizeFileName = (str) => {
+                    const trMap = {
+                        'ç': 'c', 'Ç': 'C',
+                        'ğ': 'g', 'Ğ': 'G',
+                        'ı': 'i', 'İ': 'I',
+                        'ö': 'o', 'Ö': 'O',
+                        'ş': 's', 'Ş': 'S',
+                        'ü': 'u', 'Ü': 'U'
+                    };
+                    return str
+                        .replace(/[çÇğĞıİöÖşŞüÜ]/g, letter => trMap[letter])
+                        .replace(/[^a-zA-Z0-9_]/g, '_')
+                        .replace(/_+/g, '_');
+                };
 
                 // Denetçi hücresini bul — "Enes ARSLANTÜRK" veya mevcut denetçi adını içeren paragrafı
                 // Hücre: Satır 19, Hücre 1 — mevcut içeriği temizleyip yenisini yaz
@@ -1379,48 +1315,34 @@
                     // Yeni paragrafları oluştur
                     let yeniParalar = '';
                     for (const det of denetciSirasi) {
+                        // İmzayı zip'e ekle ve rId oluştur
                         let drawingRun = '';
                         if (det.imzaBuffer) {
-                            const imzaFileName = 'media/imza_' + det.isim.replace(/\s+/g,'_') + '.jpeg';
+                            // Türkçe karakterlerden ve özel simgelerden arındırılmış güvenli isim
+                            const safeIsim = sanitizeFileName(det.isim);
+
+                            const imzaFileName = 'media/imza_' + safeIsim + '.jpeg';
                             zip.file('word/' + imzaFileName, det.imzaBuffer);
-                            const newRId = 'rIdImza_' + det.isim.replace(/[\s]+/g,'_');
+                            const newRId = 'rIdImza_' + safeIsim;
                             let relsXml = zip.file(relsPath).asText();
                             if (!relsXml.includes(newRId)) {
                                 relsXml = relsXml.replace('</Relationships>',
-                                    '<Relationship Id="' + newRId + '" Type="' + relType + '" Target="' + imzaFileName + '"/></Relationships>');
+                                    `<Relationship Id="${newRId}" Type="${relType}" Target="${imzaFileName}"/></Relationships>`);
                                 zip.file(relsPath, relsXml);
                             }
                             const docPrId = Math.floor(Math.random()*9000000)+1000000;
-                            // r: namespace'i dokümanın kök tanımından geliyor — ayrıca xmlns:r eklemiyoruz
-                            drawingRun = '<w:r><w:rPr><w:noProof/></w:rPr><w:drawing>'
-                                + '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
-                                + '<wp:extent cx="' + CX + '" cy="' + CY + '"/>'
-                                + '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
-                                + '<wp:docPr id="' + docPrId + '" name="imza' + docPrId + '"/>'
-                                + '<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>'
-                                + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
-                                + '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-                                + '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-                                + '<pic:nvPicPr><pic:cNvPr id="' + docPrId + '" name="imza' + docPrId + '"/>'
-                                + '<pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr>'
-                                + '<pic:blipFill><a:blip r:embed="' + newRId + '" cstate="print"/>'
-                                + '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
-                                + '<pic:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + CX + '" cy="' + CY + '"/></a:xfrm>'
-                                + '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></pic:spPr>'
-                                + '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+                            drawingRun = `<w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${CX}" cy="${CY}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${docPrId}" name="imza${docPrId}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${docPrId}" name="imza${docPrId}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="${newRId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" cstate="print"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="${CX}" cy="${CY}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
                         }
-                        yeniParalar += '<w:p><w:r><w:t xml:space="preserve">' + det.isim + '  </w:t></w:r>' + drawingRun + '</w:p>';
+                        yeniParalar += `<w:p><w:r><w:t xml:space="preserve">${det.isim}  </w:t></w:r>${drawingRun}</w:p>`;
                     }
 
-                    // tcPr koru, paragrafları değiştir
-                    const eskiTcIcerik = hedefTC[0];
+                    // Hücrenin mevcut <w:p>...</w:p> bloklarını yenisiyle değiştir
+                    // Hücrenin özelliklerini (w:tcPr) koru
+                    const eskiTcIcerik = hedefTC[0]; // tam <w:tc>...</w:tc>
                     const tcPrMatch = eskiTcIcerik.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
                     const tcPr = tcPrMatch ? tcPrMatch[0] : '';
-                    const yeniTC = '<w:tc>' + tcPr + yeniParalar + '</w:tc>';
-                    // finalDocXml'de değil, orijinal XML üzerinde değiştir
-                    // finalDocXml XMLSerializer çıktısı olduğundan r: prefix bozulmuş olabilir
-                    // Her ikisinde de değiştir
-                    finalDocXml = finalDocXml.replace(hedefTC[0], yeniTC);
+                    const yeniTC = `<w:tc>${tcPr}${yeniParalar}</w:tc>`;
+                    finalDocXml = finalDocXml.replace(eskiTcIcerik, yeniTC);
                     log.push('✅ Denetçi: ' + denetciSirasi.map(d=>d.isim).join(', '));
                 }
             }
@@ -1466,31 +1388,15 @@
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
-    // Silinecek olarak işaretlenen word satır indeksleri
-    let silinecekWordSatirlar = new Set();
-
     function renderToTable(targetId, data, colorClass) {
         const body = document.getElementById(targetId);
         const rCount = Math.max(...Object.values(data).map(a=>a.length));
         const rows = [];
         for (let i=0;i<rCount;i++) {
-            const isWord = targetId === 'wordBody';
-            const isSilinecek = isWord && silinecekWordSatirlar.has(i);
-
-            let delBtn = '';
-            if (targetId === 'manualBody') {
-                delBtn = '<td class="del-col"><button class="del-btn" onclick="deleteExcelRow('+i+')" title="Satırı sil">✕</button></td>';
-            } else if (isWord) {
-                const btnStyle = isSilinecek
-                    ? 'background:rgba(231,76,60,0.7);color:white;border-radius:4px;border:none;font-size:11px;padding:1px 5px;cursor:pointer;'
-                    : '';
-                const btnTitle = isSilinecek ? 'İşareti kaldır' : 'Silinecek olarak işaretle';
-                const btnText  = isSilinecek ? '↩' : '✕';
-                delBtn = '<td class="del-col"><button style="'+btnStyle+'" class="del-btn" onclick="toggleWordSil('+i+')" title="'+btnTitle+'">'+btnText+'</button></td>';
-            }
-
-            const rowStyle = isSilinecek ? ' style="opacity:0.35;text-decoration:line-through;"' : '';
-            rows.push('<tr'+rowStyle+'>'+
+            const delBtn = targetId === 'manualBody'
+                ? '<td class="del-col"><button class="del-btn" onclick="deleteExcelRow('+i+')" title="Satırı sil">✕</button></td>'
+                : '';
+            rows.push('<tr>'+
                 delBtn+
                 '<td class="idx">'+(i+1)+'</td>'+
                 '<td class="'+colorClass+'">'+escapeHtml(data.itemCode[i]||"-")+'</td>'+
@@ -1506,20 +1412,15 @@
         body.innerHTML = rows.join('');
     }
 
-    function toggleWordSil(idx) {
-        if (silinecekWordSatirlar.has(idx)) {
-            silinecekWordSatirlar.delete(idx);
-        } else {
-            silinecekWordSatirlar.add(idx);
-        }
-        if (globalWordData) renderToTable('wordBody', globalWordData, 'highlight');
-    }
-
     function deleteExcelRow(idx) {
         if (!globalExcelData) return;
+        // globalExcelData'dan o indeksi sil
         Object.keys(globalExcelData).forEach(key => {
-            if (Array.isArray(globalExcelData[key])) globalExcelData[key].splice(idx, 1);
+            if (Array.isArray(globalExcelData[key])) {
+                globalExcelData[key].splice(idx, 1);
+            }
         });
+        // Tabloyu yeniden çiz
         renderToTable('manualBody', globalExcelData, 'highlight');
     }
 </script>
