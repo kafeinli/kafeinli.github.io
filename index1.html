@@ -988,14 +988,18 @@
         const statusEl = document.getElementById('reviseStatus');
         if (!globalWordBuffer||!globalExcelData||!globalWordData) { statusEl.textContent='❌ Veriler eksik!'; return; }
 
-        const exN = globalExcelData.itemCode.length;
-        const wdN = globalWordData.itemCode.length;
+        const exN  = globalExcelData.itemCode.length;
+        const wdN  = globalWordData.itemCode.length;
+        // Silinecek kalemler düşüldükten sonra efektif rapor kalem sayısı
+        const aktifWdN = wdN - silinecekWordSatirlar.size;
 
-        if (wdN > exN) {
-            const kalanlar = globalWordData.itemCode.slice(exN).join(', ');
+        if (aktifWdN > exN) {
+            const aktifIndeksler = [];
+            for (let i=0;i<wdN;i++) if (!silinecekWordSatirlar.has(i)) aktifIndeksler.push(i);
+            const kalanlar = aktifIndeksler.slice(exN).map(i=>globalWordData.itemCode[i]).join(', ');
             showWarn(
                 '<strong>⚠️ Ürün sayısı uyuşmazlığı</strong><br><br>' +
-                'Raporda <strong>' + wdN + ' ürün</strong> var, girdiniz <strong>' + exN + ' ürün</strong>.<br>' +
+                'Raporda aktif <strong>' + aktifWdN + ' ürün</strong> var, girdiniz <strong>' + exN + ' ürün</strong>.<br>' +
                 'İlk <strong>' + exN + '</strong> ürün güncellenir. Değiştirilmeyecek ürünler:<br>' +
                 '<code style="background:#fef3c7;padding:2px 6px;border-radius:4px;">' + escapeHtml(kalanlar) + '</code>',
                 () => executeRevise(exN, statusEl),
@@ -1004,15 +1008,17 @@
             return;
         }
 
-        if (exN > wdN) {
-            const fazla = globalExcelData.itemCode.slice(wdN).join(', ');
+        if (exN > aktifWdN) {
+            const aktifIndeksler = [];
+            for (let i=0;i<wdN;i++) if (!silinecekWordSatirlar.has(i)) aktifIndeksler.push(i);
+            const fazla = globalExcelData.itemCode.slice(aktifWdN).join(', ');
             showWarn(
                 '<strong>⚠️ Ürün sayısı uyuşmazlığı</strong><br><br>' +
-                'Girdiniz <strong>' + exN + ' ürün</strong>, raporda <strong>' + wdN + ' ürün</strong> var.<br>' +
-                'Devam ederseniz rapordaki <strong>' + wdN + '</strong> ürün güncellenir.<br>' +
+                'Girdiniz <strong>' + exN + ' ürün</strong>, raporda aktif <strong>' + aktifWdN + ' ürün</strong> var.<br>' +
+                'Devam ederseniz rapordaki <strong>' + aktifWdN + '</strong> ürün güncellenir.<br>' +
                 'Rapora <strong>uygulanamayan</strong> girdi satırları:<br>' +
                 '<code style="background:#fef3c7;padding:2px 6px;border-radius:4px;">' + escapeHtml(fazla) + '</code>',
-                () => { statusEl.textContent='⚠️ ' + (exN-wdN) + ' ürün uygulanamadı: ' + fazla; executeRevise(wdN, statusEl); },
+                () => { statusEl.textContent='⚠️ ' + (exN-aktifWdN) + ' ürün uygulanamadı: ' + fazla; executeRevise(aktifWdN, statusEl); },
                 '✅ Devam Et'
             );
             return;
@@ -1060,6 +1066,46 @@ try {
                         const val = wd[key] && wd[key][wIdx];
                         if (val && val !== '-') bulkReplace(xmlDoc, val, '-');
                     });
+
+                    // Madde koduna göre tablo satırlarındaki tüm sayısal verileri de temizle
+                    // Adet, işçilik, özet tablolarında madde koduna göre eşleşen satırları sıfırla
+                    const silinecekKod = maddeKodu ? maddeKodu.replace(/\D/g,'') : null;
+                    if (silinecekKod && silinecekKod.length >= 4) {
+                        const tbls = findTables(xmlDoc);
+                        // Adet tablosu
+                        if (tbls.adet) {
+                            ch(tbls.adet,'tr').forEach(row => {
+                                const cells = ch(row,'tc'); if(!cells.length) return;
+                                const rowCode = cellTextNS(cells[0]).replace(/\D/g,'');
+                                if (rowCode !== silinecekKod) return;
+                                for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                            });
+                        }
+                        // İşçilik tablosu — tek parçalı
+                        if (tbls.iscilik) {
+                            let inTarget = false;
+                            ch(tbls.iscilik,'tr').forEach(row => {
+                                const cells = ch(row,'tc'); if(!cells.length) return;
+                                const lbl = cellTextNS(cells[0]);
+                                if (lbl.startsWith('MaddeKodu:')) {
+                                    inTarget = lbl.replace('MaddeKodu:','').replace(/\D/g,'') === silinecekKod;
+                                }
+                                if (inTarget && (lbl==='HataLimiti:' || lbl==='ÖrneklemeAdedi:')) {
+                                    for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                                }
+                            });
+                        }
+                        // Özet tabloları
+                        ['ozet','ozet2'].forEach(ozetKey => {
+                            const tbl = findTables(xmlDoc)[ozetKey]; if(!tbl) return;
+                            ch(tbl,'tr').slice(1).forEach(row => {
+                                const cells = ch(row,'tc'); if(!cells.length) return;
+                                const rowCode = cellTextNS(cells[1]).replace(/\D/g,'');
+                                if (rowCode !== silinecekKod) return;
+                                for (let c=0;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                            });
+                        });
+                    }
 
                     silinecekLog.push(maddeKodu || maddeAdi);
                 });
