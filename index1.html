@@ -1047,103 +1047,27 @@ try {
             const raporNoInput = document.getElementById('raporNoInput').value.trim();
             let dosyaAdi = 'taslakrapor';
 
-            // ── Silinecek kalemler ────────────────────────────────────────────
-            // Kullanıcının işaretlediği word satırları raporda "SİLİNECEK" olarak
-            // işaretlenir, diğer verileri silinir. Excel eşleşmesinden dışlanır.
+            // ── Silinecek kalemler — ön hazırlık ─────────────────────────────
+            // Sadece madde kodu/adını "SİLİNECEK" yap, tablo temizleme sonraki adımda
             const silinecekLog = [];
+            const silinecekKodlar = new Set();
             if (silinecekWordSatirlar.size > 0) {
                 silinecekWordSatirlar.forEach(wIdx => {
                     const maddeKodu = wd.itemCode[wIdx];
                     const maddeAdi  = wd.itemName[wIdx];
                     if (!maddeKodu && !maddeAdi) return;
-
-                    // Madde kodu ve adını "SİLİNECEK" ile değiştir
-                    if (maddeKodu && maddeKodu !== '-') bulkReplace(xmlDoc, maddeKodu, 'SİLİNECEK');
-                    if (maddeAdi  && maddeAdi  !== '-') bulkReplace(xmlDoc, maddeAdi,  'SİLİNECEK');
-
-                    // Diğer verileri (barkod, sevkiyat, sipariş, örneklem, limitler) temizle
+                    if (maddeKodu && maddeKodu !== '-') {
+                        bulkReplace(xmlDoc, maddeKodu, 'SİLİNECEK');
+                        silinecekKodlar.add(maddeKodu.replace(/\D/g,''));
+                    }
+                    if (maddeAdi && maddeAdi !== '-') bulkReplace(xmlDoc, maddeAdi, 'SİLİNECEK');
+                    // Diğer verileri bulkReplace ile temizle
                     ['barcode','shipQty','orderNo','sampleSize','majorLimit','minorLimit'].forEach(key => {
                         const val = wd[key] && wd[key][wIdx];
                         if (val && val !== '-') bulkReplace(xmlDoc, val, '-');
                     });
-
-                    // Madde koduna göre tablo satırlarındaki tüm sayısal verileri de temizle
-                    // Adet, işçilik, özet tablolarında madde koduna göre eşleşen satırları sıfırla
-                    const silinecekKod = maddeKodu ? maddeKodu.replace(/\D/g,'') : null;
-                    if (silinecekKod && silinecekKod.length >= 4) {
-                        const tbls = findTables(xmlDoc);
-                        // Adet tablosu
-                        if (tbls.adet) {
-                            ch(tbls.adet,'tr').forEach(row => {
-                                const cells = ch(row,'tc'); if(!cells.length) return;
-                                const rowCode = cellTextNS(cells[0]).replace(/\D/g,'');
-                                if (rowCode !== silinecekKod) return;
-                                for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
-                            });
-                        }
-                        // İşçilik tablosu — tek parçalı
-                        if (tbls.iscilik) {
-                            let inTarget = false;
-                            ch(tbls.iscilik,'tr').forEach(row => {
-                                const cells = ch(row,'tc'); if(!cells.length) return;
-                                const lbl = cellTextNS(cells[0]);
-                                if (lbl.startsWith('MaddeKodu:')) {
-                                    inTarget = lbl.replace('MaddeKodu:','').replace(/\D/g,'') === silinecekKod;
-                                }
-                                if (inTarget && (lbl==='HataLimiti:' || lbl==='ÖrneklemeAdedi:')) {
-                                    for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
-                                }
-                            });
-                        }
-                        // Özet tabloları
-                        ['ozet','ozet2'].forEach(ozetKey => {
-                            const tbl = findTables(xmlDoc)[ozetKey]; if(!tbl) return;
-                            ch(tbl,'tr').slice(1).forEach(row => {
-                                const cells = ch(row,'tc'); if(!cells.length) return;
-                                const rowCode = cellTextNS(cells[1]).replace(/\D/g,'');
-                                if (rowCode !== silinecekKod) return;
-                                for (let c=0;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
-                            });
-                        });
-                    }
-
                     silinecekLog.push(maddeKodu || maddeAdi);
                 });
-
-                // "SİLİNECEK" metnini sarı arka planla işaretle
-                // bulkReplace yerine xmlDoc'taki w:t nodlarını tara
-                const allT = xmlDoc.querySelectorAll ? xmlDoc.querySelectorAll('*') : [];
-                const tNodeList = xmlDoc.getElementsByTagNameNS(W, 't');
-                for (let i = 0; i < tNodeList.length; i++) {
-                    if (tNodeList[i].textContent === 'SİLİNECEK') {
-                        // Bu run'ın rPr'sine sarı highlight ekle
-                        const run = tNodeList[i].parentNode;
-                        if (!run) continue;
-                        let rPr = run.getElementsByTagNameNS(W, 'rPr')[0];
-                        if (!rPr) {
-                            rPr = xmlDoc.createElementNS(W, 'w:rPr');
-                            run.insertBefore(rPr, run.firstChild);
-                        }
-                        // Sarı highlight: <w:highlight w:val="yellow"/>
-                        const existing = rPr.getElementsByTagNameNS(W, 'highlight');
-                        if (existing.length === 0) {
-                            const hl = xmlDoc.createElementNS(W, 'w:highlight');
-                            hl.setAttributeNS(W, 'w:val', 'yellow');
-                            rPr.appendChild(hl);
-                        }
-                        // Üstü çizili: <w:strike/>
-                        const strikeExist = rPr.getElementsByTagNameNS(W, 'strike');
-                        if (strikeExist.length === 0) {
-                            const st = xmlDoc.createElementNS(W, 'w:strike');
-                            rPr.appendChild(st);
-                        }
-                    }
-                }
-
-                if (silinecekLog.length > 0) {
-                    log.push('🗑️ Silinecek: ' + silinecekLog.join(', '));
-                    log.push('⚠️ Tablolar el ile silinmeli! ' + silinecekWordSatirlar.size + ' kalem işaretlendi — adet, işçilik ve özet tablolarını Word\'de el ile silin.');
-                }
             }
 
             // Aktif (silinmeyecek) word indeksleri
@@ -1393,11 +1317,93 @@ try {
                 log.push('✅ Özet (F2): '+m4+' satır');
             }
 
-            // Güncel xmlDoc'u zip'e yaz
+            // ── Silinecek kalemler — tablo temizleme ve sarı highlight ────────
+            // Tablo güncellemeleri bittikten SONRA yapılır — doğru DOM durumunda temizleme
+            if (silinecekKodlar.size > 0) {
+                const tblsTemizle = findTables(xmlDoc);
+
+                silinecekKodlar.forEach(silinecekKod => {
+                    if (!silinecekKod || silinecekKod.length < 4) return;
+
+                    // Adet tablosu — eşleşen satırı temizle
+                    if (tblsTemizle.adet) {
+                        ch(tblsTemizle.adet,'tr').forEach(row => {
+                            const cells = ch(row,'tc'); if(!cells.length) return;
+                            const rowCode = cellTextNS(cells[0]).replace(/\D/g,'');
+                            if (rowCode !== silinecekKod) return;
+                            for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                        });
+                    }
+
+                    // İşçilik tablosu — tek parçalı
+                    if (tblsTemizle.iscilik) {
+                        let inTarget = false;
+                        ch(tblsTemizle.iscilik,'tr').forEach(row => {
+                            const cells = ch(row,'tc'); if(!cells.length) return;
+                            const lbl = cellTextNS(cells[0]);
+                            if (lbl.startsWith('MaddeKodu:'))
+                                inTarget = lbl.replace('MaddeKodu:','').replace(/\D/g,'') === silinecekKod;
+                            if (inTarget && (lbl==='HataLimiti:'||lbl==='ÖrneklemeAdedi:'))
+                                for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                        });
+                    }
+
+                    // Parçalı işçilik
+                    const bodyEl2 = all(xmlDoc.documentElement,'body')[0]||xmlDoc.documentElement;
+                    const allTbls2 = ch(bodyEl2,'tbl');
+                    for (let ti=0;ti<allTbls2.length-1;ti++) {
+                        const tRows = ch(allTbls2[ti],'tr');
+                        if (tRows.length>2) continue;
+                        const fc = ch(tRows[0],'tc')[0]; if(!fc) continue;
+                        const lbl = cellTextNS(fc);
+                        if (!lbl.startsWith('MaddeKodu:')) continue;
+                        if (lbl.replace('MaddeKodu:','').replace(/\D/g,'') !== silinecekKod) continue;
+                        const nextTbl = allTbls2[ti+1];
+                        const nextTxt = tableTextNS(nextTbl);
+                        if (!nextTxt.includes('HataLimiti:')) continue;
+                        ch(nextTbl,'tr').forEach(row => {
+                            const cells=ch(row,'tc'); if(!cells.length) return;
+                            const l=cellTextNS(cells[0]);
+                            if(l==='HataLimiti:'||l==='ÖrneklemeAdedi:')
+                                for(let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                        });
+                    }
+
+                    // Özet tabloları
+                    ['ozet','ozet2'].forEach(ozetKey => {
+                        const tbl = tblsTemizle[ozetKey]; if(!tbl) return;
+                        ch(tbl,'tr').slice(1).forEach(row => {
+                            const cells=ch(row,'tc'); if(!cells.length) return;
+                            const rowCode=cellTextNS(cells[1]).replace(/\D/g,'');
+                            if(rowCode!==silinecekKod) return;
+                            for(let c=0;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                        });
+                    });
+                });
+
+                // "SİLİNECEK" metinlerine sarı highlight ve üstü çizili ekle
+                const tNodeList = xmlDoc.getElementsByTagNameNS(W,'t');
+                for (let i=0;i<tNodeList.length;i++) {
+                    if (tNodeList[i].textContent !== 'SİLİNECEK') continue;
+                    const run = tNodeList[i].parentNode; if(!run) continue;
+                    let rPr = run.getElementsByTagNameNS(W,'rPr')[0];
+                    if (!rPr) { rPr=xmlDoc.createElementNS(W,'w:rPr'); run.insertBefore(rPr,run.firstChild); }
+                    if (!rPr.getElementsByTagNameNS(W,'highlight').length) {
+                        const hl=xmlDoc.createElementNS(W,'w:highlight');
+                        hl.setAttributeNS(W,'w:val','yellow'); rPr.appendChild(hl);
+                    }
+                    if (!rPr.getElementsByTagNameNS(W,'strike').length)
+                        rPr.appendChild(xmlDoc.createElementNS(W,'w:strike'));
+                }
+
+                if (silinecekLog.length > 0) {
+                    log.push('🗑️ Silinecek: ' + silinecekLog.join(', '));
+                    log.push('⚠️ İlgili tablo satırlarını Word\'de el ile silin.');
+                }
+            }
+
             // XMLSerializer — tablo güncellemelerini string'e çevir
             let finalDocXml = new XMLSerializer().serializeToString(xmlDoc);
-
-            // ── Denetçi — orijinal ZIP'teki XML üzerinde işle ─────────────────
             // XMLSerializer r:embed'i bozduğundan, orijinal document.xml string'ini
             // temel alıp sadece denetçi hücresini değiştiriyoruz, diğer değişiklikleri
             // (tablo güncellemeleri) finalDocXml'den alıyoruz.
@@ -1575,5 +1581,20 @@ try {
         renderToTable('manualBody', globalExcelData, 'highlight');
     }
 </script>
+<!-- ── Reklam ── -->
+<div style="width:1376px;max-width:100%;margin:32px auto 12px;position:relative;font-family:'Segoe UI',sans-serif;border-radius:12px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
+    <img src="cayseverad.jpg" alt="Çay Sever Reklam" style="width:100%;height:auto;max-height:768px;object-fit:cover;display:block;">
+    <div style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.45);color:white;font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:0.05em;">REKLAM</div>
+    <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.72));padding:24px 28px 18px;">
+        <div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:4px;">Sponsorlu İçerik</div>
+        <div style="color:white;font-size:22px;font-weight:800;margin-bottom:6px;">Çay Sever® Premium Denetim Çayı</div>
+        <div style="color:rgba(255,255,255,0.85);font-size:13px;margin-bottom:12px;">Rapor yazarken 3 bardak içenler %47 daha az hata yapar.* Bilimsel araştırmalar bunu söylüyor (n=1, araştırmacı: Enes).</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span style="background:#f59e0b;color:#1a1a1a;font-weight:800;font-size:13px;padding:8px 20px;border-radius:6px;cursor:pointer;">Hemen Sipariş Ver →</span>
+            <span style="color:rgba(255,255,255,0.55);font-size:10px;">*Bu reklam tamamen uydurmadır. Çay içmek rapor hatalarını azaltmayabilir.</span>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>
