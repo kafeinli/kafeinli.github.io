@@ -1048,7 +1048,6 @@ try {
             let dosyaAdi = 'taslakrapor';
 
             // ── Silinecek kalemler — ön hazırlık ─────────────────────────────
-            // Sadece madde kodu/adını "SİLİNECEK" yap, tablo temizleme sonraki adımda
             const silinecekLog = [];
             const silinecekKodlar = new Set();
             if (silinecekWordSatirlar.size > 0) {
@@ -1061,11 +1060,6 @@ try {
                         silinecekKodlar.add(maddeKodu.replace(/\D/g,''));
                     }
                     if (maddeAdi && maddeAdi !== '-') bulkReplace(xmlDoc, maddeAdi, 'SİLİNECEK');
-                    // Diğer verileri bulkReplace ile temizle
-                    ['barcode','shipQty','orderNo','sampleSize','majorLimit','minorLimit'].forEach(key => {
-                        const val = wd[key] && wd[key][wIdx];
-                        if (val && val !== '-') bulkReplace(xmlDoc, val, '-');
-                    });
                     silinecekLog.push(maddeKodu || maddeAdi);
                 });
             }
@@ -1318,50 +1312,106 @@ try {
             }
 
             // ── Silinecek kalemler — tablo temizleme ve sarı highlight ────────
-            // Tablo güncellemeleri bittikten SONRA yapılır — doğru DOM durumunda temizleme
             if (silinecekKodlar.size > 0) {
                 const tblsTemizle = findTables(xmlDoc);
 
                 silinecekKodlar.forEach(silinecekKod => {
                     if (!silinecekKod || silinecekKod.length < 4) return;
 
-                    // Adet tablosu — eşleşen satırı temizle
+                    // ── Header tablosunda madde sırasına göre temizle ──────────
+                    // Barkod (Satır 4), Sipariş No (Satır 5), Madde Kodu (Satır 6),
+                    // Sevkiyat (Satır 6 Hücre 3), Örneklem (Satır 8), Limitler (Satır 8-9)
+                    if (tblsTemizle.header) {
+                        const hrows = ch(tblsTemizle.header,'tr');
+                        // Kaçıncı paragraf bu madde koduna karşılık geldiğini bul
+                        // Satır 6 Hücre 1'deki paragraflar madde kodlarını içerir
+                        const kodRow = hrows[5]; // Satır 5 = 0-indexed → Satır 6
+                        if (kodRow) {
+                            const kodCells = ch(kodRow,'tc');
+                            const kodTC = kodCells[0];
+                            if (kodTC) {
+                                const paras = ch(kodTC,'p');
+                                // Hangi paragraf bu madde kodunu içeriyor?
+                                for (let pi=0; pi<paras.length; pi++) {
+                                    const paraKod = all(paras[pi],'t').map(t=>t.textContent).join('').replace(/\D/g,'');
+                                    if (paraKod !== silinecekKod) continue;
+                                    // Bu paragraf indeksine karşılık gelen tüm header hücrelerini temizle
+                                    // Barkod (Satır 4 Hücre 1 Para pi)
+                                    const barkodRow = hrows[3];
+                                    if (barkodRow) {
+                                        const bc = ch(barkodRow,'tc')[0];
+                                        if (bc && ch(bc,'p')[pi]) writePara(ch(bc,'p')[pi],'-',xmlDoc,true);
+                                    }
+                                    // Sipariş No (Satır 5 Hücre 1 Para pi)
+                                    const sipRow = hrows[4];
+                                    if (sipRow) {
+                                        const sc = ch(sipRow,'tc')[0];
+                                        if (sc && ch(sc,'p')[pi]) writePara(ch(sc,'p')[pi],'-',xmlDoc,true);
+                                    }
+                                    // Madde Kodu paragrafı zaten "SİLİNECEK" oldu
+                                    // Sevkiyat (Satır 6 Hücre 3 Para pi)
+                                    if (kodCells[2] && ch(kodCells[2],'p')[pi])
+                                        writePara(ch(kodCells[2],'p')[pi],'-',xmlDoc,true);
+                                    // Örneklem (Satır 8 Hücre 1 Para pi)
+                                    const smpRow = hrows[7];
+                                    if (smpRow) {
+                                        const smpc = ch(smpRow,'tc');
+                                        if (smpc[0] && ch(smpc[0],'p')[pi]) writePara(ch(smpc[0],'p')[pi],'-',xmlDoc,true);
+                                        if (smpc[2] && ch(smpc[2],'p')[pi]) writePara(ch(smpc[2],'p')[pi],'-',xmlDoc,true);
+                                    }
+                                    // Minör (Satır 9 Hücre 3 Para pi)
+                                    const minRow = hrows[8];
+                                    if (minRow) {
+                                        const mc = ch(minRow,'tc')[2];
+                                        if (mc && ch(mc,'p')[pi]) writePara(ch(mc,'p')[pi],'-',xmlDoc,true);
+                                    }
+                                    // Madde Adı (Satır 10 Hücre 1 Para pi)
+                                    const adiRow = hrows[9];
+                                    if (adiRow) {
+                                        const ac = ch(adiRow,'tc')[0];
+                                        if (ac && ch(ac,'p')[pi]) writePara(ch(ac,'p')[pi],'-',xmlDoc,true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Adet tablosu ───────────────────────────────────────────
                     if (tblsTemizle.adet) {
                         ch(tblsTemizle.adet,'tr').forEach(row => {
-                            const cells = ch(row,'tc'); if(!cells.length) return;
-                            const rowCode = cellTextNS(cells[0]).replace(/\D/g,'');
-                            if (rowCode !== silinecekKod) return;
-                            for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                            const cells=ch(row,'tc'); if(!cells.length) return;
+                            const rowCode=cellTextNS(cells[0]).replace(/\D/g,'');
+                            if(rowCode!==silinecekKod) return;
+                            for(let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
                         });
                     }
 
-                    // İşçilik tablosu — tek parçalı
+                    // ── İşçilik — tek parçalı ──────────────────────────────────
                     if (tblsTemizle.iscilik) {
-                        let inTarget = false;
+                        let inTarget=false;
                         ch(tblsTemizle.iscilik,'tr').forEach(row => {
-                            const cells = ch(row,'tc'); if(!cells.length) return;
-                            const lbl = cellTextNS(cells[0]);
-                            if (lbl.startsWith('MaddeKodu:'))
-                                inTarget = lbl.replace('MaddeKodu:','').replace(/\D/g,'') === silinecekKod;
-                            if (inTarget && (lbl==='HataLimiti:'||lbl==='ÖrneklemeAdedi:'))
-                                for (let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
+                            const cells=ch(row,'tc'); if(!cells.length) return;
+                            const lbl=cellTextNS(cells[0]);
+                            if(lbl.startsWith('MaddeKodu:'))
+                                inTarget=lbl.replace('MaddeKodu:','').replace(/\D/g,'')=== silinecekKod;
+                            if(inTarget&&(lbl==='HataLimiti:'||lbl==='ÖrneklemeAdedi:'))
+                                for(let c=1;c<cells.length;c++) writeCell(cells[c],'-',xmlDoc,true);
                         });
                     }
 
-                    // Parçalı işçilik
-                    const bodyEl2 = all(xmlDoc.documentElement,'body')[0]||xmlDoc.documentElement;
-                    const allTbls2 = ch(bodyEl2,'tbl');
-                    for (let ti=0;ti<allTbls2.length-1;ti++) {
-                        const tRows = ch(allTbls2[ti],'tr');
-                        if (tRows.length>2) continue;
-                        const fc = ch(tRows[0],'tc')[0]; if(!fc) continue;
-                        const lbl = cellTextNS(fc);
-                        if (!lbl.startsWith('MaddeKodu:')) continue;
-                        if (lbl.replace('MaddeKodu:','').replace(/\D/g,'') !== silinecekKod) continue;
-                        const nextTbl = allTbls2[ti+1];
-                        const nextTxt = tableTextNS(nextTbl);
-                        if (!nextTxt.includes('HataLimiti:')) continue;
-                        ch(nextTbl,'tr').forEach(row => {
+                    // ── İşçilik — parçalı ──────────────────────────────────────
+                    const bodyEl2=all(xmlDoc.documentElement,'body')[0]||xmlDoc.documentElement;
+                    const allTbls2=ch(bodyEl2,'tbl');
+                    for(let ti=0;ti<allTbls2.length-1;ti++){
+                        const tRows=ch(allTbls2[ti],'tr');
+                        if(tRows.length>2) continue;
+                        const fc=ch(tRows[0],'tc')[0]; if(!fc) continue;
+                        const lbl=cellTextNS(fc);
+                        if(!lbl.startsWith('MaddeKodu:')) continue;
+                        if(lbl.replace('MaddeKodu:','').replace(/\D/g,'')!==silinecekKod) continue;
+                        const nextTbl=allTbls2[ti+1];
+                        if(!tableTextNS(nextTbl).includes('HataLimiti:')) continue;
+                        ch(nextTbl,'tr').forEach(row=>{
                             const cells=ch(row,'tc'); if(!cells.length) return;
                             const l=cellTextNS(cells[0]);
                             if(l==='HataLimiti:'||l==='ÖrneklemeAdedi:')
@@ -1369,10 +1419,10 @@ try {
                         });
                     }
 
-                    // Özet tabloları
-                    ['ozet','ozet2'].forEach(ozetKey => {
-                        const tbl = tblsTemizle[ozetKey]; if(!tbl) return;
-                        ch(tbl,'tr').slice(1).forEach(row => {
+                    // ── Özet tabloları ─────────────────────────────────────────
+                    ['ozet','ozet2'].forEach(ozetKey=>{
+                        const tbl=tblsTemizle[ozetKey]; if(!tbl) return;
+                        ch(tbl,'tr').slice(1).forEach(row=>{
                             const cells=ch(row,'tc'); if(!cells.length) return;
                             const rowCode=cellTextNS(cells[1]).replace(/\D/g,'');
                             if(rowCode!==silinecekKod) return;
